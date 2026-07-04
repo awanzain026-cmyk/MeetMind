@@ -185,7 +185,6 @@ function AgentCard({ step, status, index }: { step: typeof agentSteps[number]; s
   const isDone = status === "done";
   const isError = status === "error";
   const { palette, icon: Icon } = step;
-  const dotClr = isDone ? "text-emerald-400" : isRunning ? `text-[${palette.primary}]` : isError ? "text-error" : "text-zinc-600";
 
   return (
     <motion.div
@@ -196,17 +195,18 @@ function AgentCard({ step, status, index }: { step: typeof agentSteps[number]; s
       }}
       className={cn(
         "relative flex items-center gap-4 rounded-xl border-2 p-4 transition-all duration-500",
-        isDone && "border-emerald-500/30 bg-emerald-500/5",
         isRunning && "bg-surface2",
         isError && "border-red-500/30 bg-red-500/5",
         !isDone && !isRunning && !isError && "border-border bg-surface2/30",
       )}
       style={
-        isRunning ? {
+        isDone ? {
+          borderColor: `${palette.primary}40`,
+          backgroundColor: palette.bg,
+          boxShadow: `0 0 25px ${palette.glow}`,
+        } : isRunning ? {
           borderColor: palette.border,
           boxShadow: `0 0 30px ${palette.glow}, inset 0 0 30px ${palette.bg}`,
-        } : isDone ? {
-          boxShadow: `0 0 20px rgba(16,185,129,0.1)`,
         } : undefined
       }
     >
@@ -224,16 +224,21 @@ function AgentCard({ step, status, index }: { step: typeof agentSteps[number]; s
       <div
         className={cn(
           "relative z-10 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl transition-all duration-500",
-          isDone && "bg-emerald-500/20",
           isRunning && "animate-pulse-ring",
           isError && "bg-red-500/20",
           !isDone && !isRunning && !isError && "bg-surface2",
         )}
-        style={isRunning ? { backgroundColor: palette.bg, "--ring-color": `${palette.primary}40` } as React.CSSProperties : undefined}
+        style={
+          isDone
+            ? { backgroundColor: palette.bg }
+            : isRunning
+              ? { backgroundColor: palette.bg, "--ring-color": `${palette.primary}40` } as React.CSSProperties
+              : undefined
+        }
       >
         {isDone ? (
           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300 }}>
-            <CheckCircle className="h-6 w-6 text-emerald-400" />
+            <CheckCircle className="h-6 w-6" style={{ color: palette.primary }} />
           </motion.div>
         ) : isError ? (
           <AlertTriangle className="h-6 w-6 text-error" />
@@ -249,20 +254,25 @@ function AgentCard({ step, status, index }: { step: typeof agentSteps[number]; s
         <div className="flex items-center gap-2">
           <p className={cn(
             "text-sm font-semibold",
-            isDone && "text-emerald-300",
             isRunning && "text-text-primary",
             isError && "text-error",
             !isDone && !isRunning && !isError && "text-zinc-500",
-          )}>
+          )}
+            style={isDone ? { color: palette.primary } : undefined}
+          >
             {step.label}
           </p>
           {isDone && (
-            <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20">
-              <Check className="h-3 w-3 text-emerald-400" />
+            <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }}
+              className="flex h-5 w-5 items-center justify-center rounded-full"
+              style={{ backgroundColor: `${palette.primary}20` }}
+            >
+              <Check className="h-3 w-3" style={{ color: palette.primary }} />
             </motion.span>
           )}
         </div>
-        <p className={cn("text-xs mt-0.5", isRunning && "animate-pulse", isDone ? "text-emerald-400/60" : isRunning ? "text-zinc-400" : "text-zinc-600")}>
+        <p className={cn("text-xs mt-0.5", isRunning && "animate-pulse", isRunning ? "text-zinc-400" : "text-zinc-600")}
+          style={isDone ? { color: `${palette.primary}99` } : undefined}>
           {isRunning ? step.desc : isDone ? "Completed" : isError ? "Failed" : "Waiting..."}
         </p>
       </div>
@@ -285,11 +295,11 @@ export default function AnalyzePage() {
   const [crash, setCrash] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("summary");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [apiData, setApiData] = useState<MeetingAnalysis | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const toast = useToast();
   const mountedRef = useRef(true);
   const abortRef = useRef(false);
-  const apiDataRef = useRef<MeetingAnalysis | null>(null);
-  const apiErrorRef = useRef<string | null>(null);
   const pipeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
@@ -299,25 +309,24 @@ export default function AnalyzePage() {
     if (!loading) return;
     const allDone = AGENT_IDS.every((id) => agentStatuses[id] === "done");
     if (!allDone) return;
-
-    const data = apiDataRef.current;
-    const err = apiErrorRef.current;
-    if (!data && !err) return; // API hasn't responded yet
+    if (!apiData && !apiError) return;
 
     const timer = setTimeout(() => {
       if (!mountedRef.current) return;
-      if (data) {
-        setResult(data);
+      if (apiData) {
+        setResult(apiData);
+        setApiData(null);
         toast.add("Analysis complete! All 5 agents finished.");
       } else {
-        setError(err);
-        toast.add(err || "Analysis failed", false);
+        setError(apiError);
+        setApiError(null);
+        toast.add(apiError || "Analysis failed", false);
       }
       setLoading(false);
-    }, 400);
+    }, 600);
 
     return () => clearTimeout(timer);
-  }, [loading, agentStatuses, toast]);
+  }, [loading, agentStatuses, apiData, apiError, toast]);
 
   const copyText = useCallback(async (text: string, id: string) => {
     try {
@@ -331,8 +340,8 @@ export default function AnalyzePage() {
   const handleAnalyze = useCallback(async () => {
     if (!transcript.trim() || loading) return;
     abortRef.current = false;
-    apiDataRef.current = null;
-    apiErrorRef.current = null;
+    setApiData(null);
+    setApiError(null);
     setLoading(true);
     setError(null);
     setResult(null);
@@ -388,12 +397,12 @@ export default function AnalyzePage() {
 
       const data = json.data as MeetingAnalysis;
       if (!mountedRef.current) return;
-      apiDataRef.current = data;
+      setApiData(data);
     } catch (err) {
       if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
-      apiErrorRef.current = msg;
+      setApiError(msg);
       setAgentStatuses((prev) => {
         const n = { ...prev };
         for (const k of AGENT_IDS) { if (n[k] === "running") n[k] = "error"; }
