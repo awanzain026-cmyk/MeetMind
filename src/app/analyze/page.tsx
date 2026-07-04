@@ -1,329 +1,124 @@
 "use client";
 
-import { useState, useRef, lazy, Suspense } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
-import confetti from "canvas-confetti";
-import {
-  Brain,
-  ArrowLeft,
-  RotateCcw,
-  AlertTriangle,
-  CheckCircle2,
-  ArrowUpRight,
-  Printer,
-  Share2,
-  Check,
-} from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
-import AgentProgress from "@/components/agent/AgentProgress";
-import TranscriptInput from "@/components/sections/TranscriptInput";
-import { useAnalysis } from "@/lib/hooks/useAnalysis";
-import { useToast, ToastContainer } from "@/components/ui/Toast";
+import { useState } from "react";
 
-const ResultsPanel = lazy(() => import("@/components/agent/ResultsPanel"));
+const SAMPLE = `Meeting: Q3 Product Roadmap Planning
+Date: March 15, 2024
+Attendees: Sarah Chen (PM), Mike Torres (Eng), Lisa Park (Design), James Wilson (Marketing)
 
-type Phase = "input" | "processing" | "results" | "error";
-
-function ResultsSkeleton() {
-  return (
-    <div className="animate-pulse space-y-4">
-      <div className="h-8 w-48 rounded bg-surface2" />
-      <div className="h-4 w-72 rounded bg-surface2" />
-      <div className="mt-6 h-40 rounded-xl bg-surface2" />
-      <div className="h-32 rounded-xl bg-surface2" />
-      <div className="h-32 rounded-xl bg-surface2" />
-    </div>
-  );
-}
+Sarah: Let's start with the Q3 roadmap. We need to finalize priorities by end of week.
+Mike: The team has bandwidth for 2 major features. I'd recommend focusing on the analytics dashboard and the notification system.
+Lisa: From a design perspective, the analytics dashboard has more UX debt. We should prioritize that.
+Sarah: Agreed. Let's make the analytics dashboard our top priority.
+Mike: I'll need 3 engineers for 6 weeks. We can start mid-April.
+Sarah: Great. Also, we need to discuss the customer feedback about the mobile app performance.
+James: Marketing has been hearing complaints about load times on Android.
+Mike: We can allocate one engineer to optimize performance in parallel.
+Sarah: Perfect. James, can you prepare a customer communication about the upcoming improvements?
+James: Sure, I'll draft something by Friday.
+Sarah: Let's schedule a follow-up for next Monday to review the engineering plan.
+Mike: Works for me. I'll have the detailed breakdown ready by then.
+Lisa: I'll have the design explorations done by Thursday for review.
+Sarah: Excellent. Action items: Mike - engineering plan by Monday; Lisa - design explorations by Thursday; James - customer comms by Friday.`;
 
 export default function AnalyzePage() {
-  const { agents, currentAgent, results, isLoading, error, progress, analyze, reset } =
-    useAnalysis();
-  const { toasts, addToast, dismiss } = useToast();
-  const [phase, setPhase] = useState<Phase>("input");
-  const [copiedShare, setCopiedShare] = useState(false);
-  const progressRef = useRef<HTMLDivElement>(null);
+  const [transcript, setTranscript] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAnalyze = async (
-    transcript: string,
-    title: string,
-    depth: "quick" | "standard" | "deep",
-  ) => {
-    setPhase("processing");
-    setTimeout(() => {
-      progressRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 100);
+  const handleSubmit = async () => {
+    if (!transcript.trim() || loading) return;
+    setLoading(true);
+    setResult(null);
+    setError(null);
+
     try {
-      await analyze(transcript, title, depth);
-      setPhase("results");
-      addToast("Analysis complete! All 5 agents finished.", "success");
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"],
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: transcript.trim(),
+          title: "Meeting Analysis",
+          depth: "quick",
+        }),
       });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(
+          (body as { error?: string })?.error ?? `HTTP ${res.status}`,
+        );
+      }
+
+      const text = await res.text();
+      setResult(text);
     } catch (err) {
-      console.error("[AnalyzePage] Analysis failed:", err);
-      setPhase("error");
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[AnalyzePage]", msg);
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
   };
-
-  const handleRetry = () => {
-    reset();
-    setPhase("input");
-  };
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleShare = async () => {
-    const url = window.location.href;
-    try {
-      await navigator.clipboard.writeText(
-        `Check out my meeting analysis on MeetMind: ${url}`,
-      );
-      setCopiedShare(true);
-      addToast("Share link copied to clipboard!", "success");
-      setTimeout(() => setCopiedShare(false), 2000);
-    } catch {
-      addToast("Could not copy share link", "error");
-    }
-  };
-
-  const percent = Math.round(progress * 100);
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-full flex flex-col">
-        <ToastContainer toasts={toasts} onDismiss={dismiss} />
+    <div className="mx-auto max-w-3xl px-4 py-12">
+      <h1 className="mb-2 text-2xl font-bold text-white">
+        Analyze Your Meeting
+      </h1>
+      <p className="mb-6 text-sm text-gray-400">
+        Paste a transcript and let 5 AI agents analyze it.
+      </p>
 
-        <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl no-print">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm text-text-muted hover:text-text-primary transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
-                  <Brain className="h-3.5 w-3.5 text-white" />
-                </div>
-                <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-base font-bold text-transparent">
-                  MeetMind
-                </span>
-              </div>
-            </Link>
+      <textarea
+        value={transcript}
+        onChange={(e) => setTranscript(e.target.value)}
+        placeholder="Paste your meeting transcript here..."
+        rows={10}
+        className="mb-4 w-full rounded-lg border border-gray-700 bg-gray-900 p-4 text-sm text-white placeholder-gray-500"
+      />
 
-            <div className="flex items-center gap-2">
-              {phase === "results" && (
-                <>
-                  <button
-                    onClick={handlePrint}
-                    className="flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
-                    title="Download as PDF"
-                  >
-                    <Printer className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">PDF</span>
-                  </button>
-                  <button
-                    onClick={handleShare}
-                    className="flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
-                    title="Share results"
-                  >
-                    {copiedShare ? (
-                      <Check className="h-3.5 w-3.5 text-success" />
-                    ) : (
-                      <Share2 className="h-3.5 w-3.5" />
-                    )}
-                    <span className="hidden sm:inline">Share</span>
-                  </button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRetry}
-                    className="gap-1.5"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">New</span>
-                  </Button>
-                  <Link href="/">
-                    <Button variant="secondary" size="sm" className="gap-1.5">
-                      <ArrowUpRight className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Home</span>
-                    </Button>
-                  </Link>
-                </>
-              )}
-              {phase !== "results" && (
-                <span className="text-xs text-text-muted hidden sm:block">
-                  AI Meeting Intelligence
-                </span>
-              )}
-            </div>
-          </div>
-        </header>
+      <div className="mb-6 flex items-center gap-3">
+        <button
+          onClick={() => {
+            setTranscript(SAMPLE);
+          }}
+          className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
+        >
+          Load Sample
+        </button>
 
-        <main className="flex-1">
-          <AnimatePresence mode="wait">
-            {phase === "input" && (
-              <motion.div
-                key="input"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-20"
-              >
-                <div className="mb-8 text-center">
-                  <h1 className="text-2xl font-bold text-text-primary sm:text-4xl">
-                    Analyze Your Meeting
-                  </h1>
-                  <p className="mt-2 text-sm text-text-muted sm:text-base">
-                    Paste a transcript and let 5 AI agents extract everything
-                    important.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
-                  <TranscriptInput
-                    onAnalyze={handleAnalyze}
-                    loading={isLoading}
-                  />
-                </div>
-              </motion.div>
-            )}
-
-            {phase === "processing" && (
-              <motion.div
-                key="processing"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16"
-                ref={progressRef}
-              >
-                <div className="mb-6 text-center">
-                  <motion.div
-                    animate={{ scale: [1, 1.05, 1] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15"
-                  >
-                    <Brain className="h-6 w-6 text-primary" />
-                  </motion.div>
-                  <h2 className="text-lg font-bold text-text-primary sm:text-xl">
-                    Analyzing Your Meeting
-                  </h2>
-                  <p className="mt-1 text-sm text-text-muted">
-                    5 AI agents processing your transcript
-                    {percent > 0 && (
-                      <span className="ml-1 text-primary">
-                        &mdash; {percent}% complete
-                      </span>
-                    )}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
-                  <AgentProgress
-                    agents={agents}
-                    currentAgent={currentAgent ?? ""}
-                  />
-                </div>
-
-                <div className="mt-6 flex items-center justify-center gap-2 text-xs text-text-dim">
-                  <div className="flex items-center gap-1">
-                    <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                    Processing
-                  </div>
-                  <span>&middot;</span>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle2 className="h-3 w-3 text-success" />
-                    {agents.filter((a) => a.status === "done").length} done
-                  </div>
-                  <span>&middot;</span>
-                  <div className="flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3 text-text-dim" />
-                    {agents.filter((a) => a.status === "idle").length} pending
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {phase === "results" && results && (
-              <motion.div
-                key="results"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16"
-              >
-                <div className="mb-6 flex flex-col items-center justify-between gap-4 sm:flex-row">
-                  <div>
-                    <h2 className="text-lg font-bold text-text-primary sm:text-xl">
-                      Analysis Results
-                    </h2>
-                    <p className="text-sm text-text-muted">
-                      All 5 agents completed their analysis
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
-                  <Suspense fallback={<ResultsSkeleton />}>
-                    <ResultsPanel analysis={results} />
-                  </Suspense>
-                </div>
-              </motion.div>
-            )}
-
-            {phase === "error" && (
-              <motion.div
-                key="error"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3 }}
-                className="mx-auto max-w-lg px-4 py-20 text-center"
-              >
-                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/15">
-                  <AlertTriangle className="h-8 w-8 text-error" />
-                </div>
-                <h2 className="mb-2 text-2xl font-bold text-text-primary">
-                  Analysis Failed
-                </h2>
-                <p className="mb-2 text-sm text-text-muted">
-                  {error || "Something went wrong during analysis."}
-                </p>
-                <p className="mb-8 text-xs text-text-dim">
-                  Check your API key configuration and try again.
-                </p>
-                <div className="flex items-center justify-center gap-3">
-                  <Button onClick={handleRetry} className="gap-2">
-                    <RotateCcw className="h-4 w-4" /> Try Again
-                  </Button>
-                  <Link href="/">
-                    <Button variant="ghost">Back Home</Button>
-                  </Link>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
-
-        {phase !== "processing" && (
-          <footer className="no-print border-t border-border bg-surface">
-            <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-text-dim">
-              &copy; {new Date().getFullYear()} MeetMind. AI-powered meeting
-              intelligence.
-            </div>
-          </footer>
-        )}
+        <button
+          onClick={handleSubmit}
+          disabled={!transcript.trim() || loading}
+          className="rounded-lg bg-indigo-600 px-6 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        >
+          {loading ? "Analyzing..." : "Analyze Meeting"}
+        </button>
       </div>
-    </ErrorBoundary>
+
+      {loading && (
+        <div className="mb-4 rounded-lg border border-gray-700 bg-gray-900 p-4 text-sm text-gray-400">
+          Processing transcript with 5 AI agents...
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-800 bg-red-900/30 p-4 text-sm text-red-300">
+          <p className="font-semibold">Error</p>
+          <p>{error}</p>
+        </div>
+      )}
+
+      {result && (
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
+          <h2 className="mb-3 text-lg font-semibold text-white">Response</h2>
+          <pre className="overflow-auto whitespace-pre-wrap text-sm text-gray-300">
+            {result}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 }
