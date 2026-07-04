@@ -176,6 +176,7 @@ export function useAnalysis(): UseAnalysisReturn {
             a.status === "running" ? { ...a, status: "error" as const } : a,
           ),
         );
+        throw err;
       } finally {
         setIsLoading(false);
         abortRef.current = null;

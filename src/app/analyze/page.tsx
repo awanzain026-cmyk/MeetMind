@@ -65,7 +65,8 @@ export default function AnalyzePage() {
         origin: { y: 0.6 },
         colors: ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"],
       });
-    } catch {
+    } catch (err) {
+      console.error("[AnalyzePage] Analysis failed:", err);
       setPhase("error");
     }
   };

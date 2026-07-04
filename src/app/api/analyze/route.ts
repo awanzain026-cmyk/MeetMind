@@ -444,7 +444,9 @@ Sentiment: ${sentiment}`;
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "An unknown error occurred";
+        const stack = error instanceof Error ? error.stack : undefined;
         console.error("[Analyze] Pipeline failed:", message);
+        if (stack) console.error("[Analyze] Stack:", stack);
         send("error", { message });
       } finally {
         clearTimeout(timeout);
