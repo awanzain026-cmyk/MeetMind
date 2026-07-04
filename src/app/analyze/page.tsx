@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowRight, Bot, Sparkles, FileText, AlertTriangle, CheckCircle,
@@ -124,7 +124,7 @@ function useToast() {
     setTimeout(() => set((p) => p.filter((t) => t.id !== id)), 3000);
   }, []);
   const dismiss = useCallback((id: number) => set((p) => p.filter((t) => t.id !== id)), []);
-  return { items, add, dismiss };
+  return useMemo(() => ({ items, add, dismiss }), [items, add, dismiss]);
 }
 
 function ToastBar({ items, dismiss }: { items: { id: number; msg: string; ok: boolean }[]; dismiss: (id: number) => void }) {
@@ -734,10 +734,18 @@ export default function AnalyzePage() {
                           {copiedId === "copy-email" ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                           Copy
                         </button>
-                        <a href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
-                          <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
-                        </a>
+                        {result.followUpEmail.length < 1800 ? (
+                          <a href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
+                            <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
+                          </a>
+                        ) : (
+                          <button onClick={() => copyText(result.followUpEmail, "copy-email-long")}
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
+                            {copiedId === "copy-email-long" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                            Copy (email too long for Gmail link)
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="rounded-xl bg-background p-4">
