@@ -325,20 +325,20 @@ function HeroHeadline() {
     >
       Turn Any Meeting Into{" "}
       <br className="hidden sm:block" />
-      <span className="relative inline-block">
-        <AnimatePresence mode="wait">
-          <motion.span
-            key={heroWords[wordIndex]}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.4 }}
-            className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent"
-          >
-            {heroWords[wordIndex]}
-          </motion.span>
-        </AnimatePresence>
-      </span>
+          <span className="relative inline-block">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={heroWords[wordIndex]}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.4 }}
+                className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent animate-gradient-shift"
+              >
+                {heroWords[wordIndex]}
+              </motion.span>
+            </AnimatePresence>
+          </span>
     </motion.h1>
   );
 }
@@ -734,12 +734,12 @@ function AgentsSection() {
                 className={cn(
                   "relative min-w-[220px] flex-shrink-0 snap-start cursor-pointer overflow-hidden rounded-2xl border p-5 transition-all duration-300",
                   isActive || isHovered
-                    ? "border-primary/30 bg-surface shadow-lg shadow-primary/5"
+                    ? "bg-surface shadow-lg shadow-primary/5 animate-border-glow"
                     : "border-border bg-surface/50",
                 )}
                 style={
                   isActive || isHovered
-                    ? { boxShadow: `0 0 30px ${agent.color}15` }
+                    ? { boxShadow: `0 0 30px ${agent.color}20` }
                     : undefined
                 }
               >

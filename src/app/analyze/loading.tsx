@@ -1,19 +1,12 @@
-import { Brain } from "lucide-react";
-
 export default function AnalyzeLoading() {
   return (
-    <div className="flex min-h-[80vh] items-center justify-center px-4">
-      <div className="text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary/15">
-          <Brain className="h-7 w-7 text-primary animate-pulse" />
-        </div>
-        <h2 className="text-lg font-semibold text-text-primary">
-          Loading MeetMind
-        </h2>
-        <p className="mt-1 text-sm text-text-muted">
-          Preparing the analysis dashboard...
-        </p>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#08090f] px-4">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#6366f1]/10">
+        <div
+          className="h-6 w-6 animate-spin rounded-full border-2 border-current border-r-transparent text-[#6366f1]"
+        />
       </div>
+      <p className="text-sm text-[#64748b]">Loading analyzer...</p>
     </div>
   );
 }
