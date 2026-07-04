@@ -1,5 +1,5 @@
 const BASE_URL = "https://sodeom.com/v1";
-const MODEL = "gpt-4o";
+const DEFAULT_MODEL = "gpt-4o";
 
 export class SodeomError extends Error {
   constructor(
@@ -16,18 +16,10 @@ export async function createCompletion(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   systemPrompt?: string,
 ): Promise<string> {
-  const apiKey = process.env.SODEOM_API_KEY;
-
-  if (!apiKey) {
-    throw new SodeomError(
-      "SODEOM_API_KEY is not configured",
-      500,
-      "missing_api_key",
-    );
-  }
+  const apiKey = process.env.SODEOM_API_KEY || "any";
 
   const body: Record<string, unknown> = {
-    model: MODEL,
+    model: DEFAULT_MODEL,
     messages: systemPrompt
       ? [{ role: "system" as const, content: systemPrompt }, ...messages]
       : messages,
@@ -136,10 +128,7 @@ export async function createCompletionWithRetry(
       lastError = error instanceof Error ? error : new Error(String(error));
 
       if (error instanceof SodeomError) {
-        if (
-          error.code === "auth_error" ||
-          error.code === "missing_api_key"
-        ) {
+        if (error.code === "auth_error") {
           throw error;
         }
         if (error.code === "rate_limit" && attempt < maxRetries) {
