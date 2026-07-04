@@ -1,5 +1,40 @@
 import type { ActionItem, MeetingAnalysis } from "@/lib/types";
 
+function generateId(): string {
+  return `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function extractActionItemsFallback(raw: string, transcript: string): ActionItem[] {
+  // Try to extract tasks from transcript using regex patterns
+  const lines = transcript.split("\n");
+  const items: ActionItem[] = [];
+
+  // Pattern: "Name: I'll do X" or "Name will do X" or numbered lists
+  const patterns = [
+    /(?:^|\n)\s*(?:\d+[\.\)]\s*)?(\w+)\s*(?:—|[-–]|will|can|should|could|needs?\s+to)\s*(.+?)(?:\.|$)/gi,
+    /(?:^|\n)\s*(?:\d+[\.\)]\s*)?(?:-\s+)?(.+?)\s*[–—]\s*(\w+)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(transcript)) !== null) {
+      const owner = m[1]?.trim() || "Unassigned";
+      const task = m[2]?.trim() || m[1]?.trim() || "";
+      if (task.length > 5 && !items.some((i) => i.task === task)) {
+        items.push({
+          id: generateId(),
+          task,
+          owner,
+          deadline: "TBD",
+          priority: "medium" as const,
+        });
+      }
+    }
+  }
+
+  return items.slice(0, 10);
+}
+
 const SODEOM_URL = "https://sodeom.com/v1/chat/completions";
 const BEARER = "free";
 const MODEL = "gpt-4o";
@@ -68,13 +103,45 @@ async function callAI(systemPrompt: string, userContent: string): Promise<string
   }
 }
 
-function parseJSON<T>(text: string, label: string): T {
-  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+function extractJSON(text: string): string {
+  // Try multiple strategies to extract valid JSON
+  const cleaned = text.trim();
+
+  // Strategy 1: Remove markdown code fences
+  let attempt = cleaned.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+  try { JSON.parse(attempt); return attempt; } catch { /* next */ }
+
+  // Strategy 2: Find first {…} or […]
+  const braceMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    attempt = braceMatch[0];
+    try { JSON.parse(attempt); return attempt; } catch { /* next */ }
+  }
+  const bracketMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (bracketMatch) {
+    attempt = bracketMatch[0];
+    try { JSON.parse(attempt); return attempt; } catch { /* next */ }
+  }
+
+  // Strategy 3: Remove all non-JSON prefix text (some AIs add "Here is the result:")
+  const jsonStart = cleaned.indexOf("{");
+  if (jsonStart >= 0) {
+    attempt = cleaned.slice(jsonStart);
+    const lastBrace = attempt.lastIndexOf("}");
+    if (lastBrace >= 0) attempt = attempt.slice(0, lastBrace + 1);
+    try { JSON.parse(attempt); return attempt; } catch { /* next */ }
+  }
+
+  return cleaned;
+}
+
+function parseJSON<T>(text: string, label: string): T | null {
+  const extracted = extractJSON(text);
   try {
-    return JSON.parse(cleaned) as T;
+    return JSON.parse(extracted) as T;
   } catch {
-    console.error(`[Analyze] Failed to parse ${label}:`, cleaned.slice(0, 300));
-    throw new Error(`Failed to parse ${label} output as JSON`);
+    console.error(`[Analyze] Failed to parse ${label}:`, extracted.slice(0, 300));
+    return null;
   }
 }
 
@@ -91,69 +158,116 @@ export async function POST(request: Request) {
           : "Provide a balanced, standard analysis.";
 
     // Agent 1: Transcript Processor
-    const raw1 = await callAI(
-      `You are a meeting transcript processor. Extract key metadata and clean the transcript.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"cleanedTranscript":"...","title":"...","date":"...","participants":["..."],"topics":["..."]}`,
-      `Process this meeting transcript:\n\n${transcript}`,
-    );
-    const r1 = parseJSON<{
-      cleanedTranscript: string;
-      title: string;
-      date: string;
-      participants: string[];
-      topics: string[];
-    }>(raw1, "transcript-processor");
-
-    const cleanedTranscript = r1.cleanedTranscript || transcript;
-    const meetingTitle = r1.title || "Untitled Meeting";
-    const participants = r1.participants || [];
-    const topics = r1.topics || [];
+    let cleanedTranscript = transcript;
+    let meetingTitle = "Untitled Meeting";
+    let participants: string[] = [];
+    let topics: string[] = [];
+    try {
+      const raw1 = await callAI(
+        `You are a meeting transcript processor. Extract key metadata and clean the transcript.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"cleanedTranscript":"...","title":"...","date":"...","participants":["..."],"topics":["..."]}`,
+        `Process this meeting transcript:\n\n${transcript}`,
+      );
+      const r1 = parseJSON<{
+        cleanedTranscript: string;
+        title: string;
+        date: string;
+        participants: string[];
+        topics: string[];
+      }>(raw1, "transcript-processor");
+      if (r1) {
+        cleanedTranscript = r1.cleanedTranscript || transcript;
+        meetingTitle = r1.title || "Untitled Meeting";
+        participants = r1.participants || [];
+        topics = r1.topics || [];
+      }
+    } catch (e) {
+      console.error("[Agent 1] Transcript processor error:", e);
+    }
 
     // Agent 2: Action Item Extractor
-    const raw2 = await callAI(
-      `You are an expert at identifying action items in meetings. Extract every task, commitment, and next step.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"actionItems":[{"id":"...","task":"...","owner":"...","deadline":"...","priority":"high|medium|low"}]}`,
-      `Extract action items from this meeting transcript:\n\n${cleanedTranscript}`,
-    );
-    const r2 = parseJSON<{ actionItems: ActionItem[] }>(raw2, "action-item-extractor");
-    const actionItems = r2.actionItems || [];
+    let actionItems: ActionItem[] = [];
+    try {
+      const raw2 = await callAI(
+        `You are an expert at identifying action items in meetings. Extract every task, commitment, and next step. You MUST return ONLY valid JSON.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"actionItems":[{"id":"...","task":"...","owner":"...","deadline":"...","priority":"high|medium|low"}]}`,
+        `Extract action items from this meeting transcript:\n\n${cleanedTranscript}`,
+      );
+      const r2 = parseJSON<{ actionItems: ActionItem[] }>(raw2, "action-item-extractor");
+      if (r2 && Array.isArray(r2.actionItems)) {
+        actionItems = r2.actionItems;
+      } else {
+        // Fallback: try to parse raw text as action items
+        console.warn("[Agent 2] Fallback parsing action items from raw text");
+        actionItems = extractActionItemsFallback(raw2, cleanedTranscript);
+      }
+    } catch (e) {
+      console.error("[Agent 2] Action item extractor error:", e);
+      actionItems = extractActionItemsFallback("", cleanedTranscript);
+    }
 
     // Agent 3: Sentiment Analyzer
-    const raw3 = await callAI(
-      `Analyze the sentiment and tone of this meeting. Identify positive moments, concerns, and overall team morale.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"overallSentiment":"positive|neutral|negative","score":0-100,"keyMoments":["..."],"concerns":["..."]}`,
-      `Analyze the sentiment of this meeting transcript:\n\n${cleanedTranscript}`,
-    );
-    const r3 = parseJSON<{
-      overallSentiment: string;
-      score: number;
-      keyMoments: string[];
-      concerns: string[];
-    }>(raw3, "sentiment-analyzer");
-    const sentiment = r3.overallSentiment || "neutral";
-    const sentimentScore = r3.score ?? 50;
-    const concerns = r3.concerns || [];
+    let sentiment = "neutral";
+    let sentimentScore = 50;
+    let concerns: string[] = [];
+    try {
+      const raw3 = await callAI(
+        `Analyze the sentiment and tone of this meeting. Identify positive moments, concerns, and overall team morale.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"overallSentiment":"positive|neutral|negative","score":0-100,"keyMoments":["..."],"concerns":["..."]}`,
+        `Analyze the sentiment of this meeting transcript:\n\n${cleanedTranscript}`,
+      );
+      const r3 = parseJSON<{
+        overallSentiment: string;
+        score: number;
+        keyMoments: string[];
+        concerns: string[];
+      }>(raw3, "sentiment-analyzer");
+      if (r3) {
+        sentiment = r3.overallSentiment || "neutral";
+        sentimentScore = r3.score ?? 50;
+        concerns = r3.concerns || [];
+      }
+    } catch (e) {
+      console.error("[Agent 3] Sentiment analyzer error:", e);
+    }
 
     // Agent 4: Summary Writer
-    const actionText = actionItems
-      .map((a) => `- ${a.task} (Owner: ${a.owner}, Priority: ${a.priority})`)
-      .join("\n");
-    const raw4 = await callAI(
-      `Write a comprehensive yet concise meeting summary. Include key decisions made, important discussions, and outcomes.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"summary":"...","decisions":["..."]}`,
-      `Write a summary for this meeting.\n\nTranscript:\n${cleanedTranscript}\n\nAction Items:\n${actionText || "None"}\n\nSentiment: ${sentiment} (Score: ${sentimentScore}/100)\nConcerns: ${concerns.join(", ") || "None"}`,
-    );
-    const r4 = parseJSON<{ summary: string; decisions: string[] }>(raw4, "summary-writer");
-    const summary = r4.summary || "No summary generated.";
-    const decisions = r4.decisions || [];
+    let summary = "No summary generated.";
+    let decisions: string[] = [];
+    try {
+      const actionText = actionItems
+        .map((a) => `- ${a.task} (Owner: ${a.owner}, Priority: ${a.priority})`)
+        .join("\n");
+      const raw4 = await callAI(
+        `Write a comprehensive yet concise meeting summary. Include key decisions made, important discussions, and outcomes.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"summary":"...","decisions":["..."]}`,
+        `Write a summary for this meeting.\n\nTranscript:\n${cleanedTranscript}\n\nAction Items:\n${actionText || "None"}\n\nSentiment: ${sentiment} (Score: ${sentimentScore}/100)\nConcerns: ${concerns.join(", ") || "None"}`,
+      );
+      const r4 = parseJSON<{ summary: string; decisions: string[] }>(raw4, "summary-writer");
+      if (r4) {
+        summary = r4.summary || "No summary generated.";
+        decisions = r4.decisions || [];
+      }
+    } catch (e) {
+      console.error("[Agent 4] Summary writer error:", e);
+    }
 
     // Agent 5: Follow-up Email
-    const actionText2 = actionItems
-      .map((a, i) => `${i + 1}. ${a.task} — Owner: ${a.owner}, Due: ${a.deadline} [${a.priority}]`)
-      .join("\n");
-    const decisionsText = decisions.map((d) => `- ${d}`).join("\n");
-    const raw5 = await callAI(
-      `Write a professional follow-up email for this meeting. Include summary, decisions, and action items with owners.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"to":"...","subject":"...","body":"..."}`,
-      `Draft a follow-up email for this meeting.\n\nMeeting Title: ${meetingTitle}\n\nSummary:\n${summary}\n\nKey Decisions:\n${decisionsText || "None"}\n\nAction Items:\n${actionText2 || "None"}\n\nSentiment: ${sentiment}`,
-    );
-    const r5 = parseJSON<{ to: string; subject: string; body: string }>(raw5, "followup-email");
-    const followUpEmail = r5.body || raw5;
+    let followUpEmail = "Follow-up email generation failed.";
+    try {
+      const actionText2 = actionItems
+        .map((a, i) => `${i + 1}. ${a.task} — Owner: ${a.owner}, Due: ${a.deadline} [${a.priority}]`)
+        .join("\n");
+      const decisionsText = decisions.map((d) => `- ${d}`).join("\n");
+      const raw5 = await callAI(
+        `Write a professional follow-up email for this meeting. Include summary, decisions, and action items with owners.\n${depthInstr}\nReturn ONLY valid JSON (no markdown) with: {"to":"...","subject":"...","body":"..."}`,
+        `Draft a follow-up email for this meeting.\n\nMeeting Title: ${meetingTitle}\n\nSummary:\n${summary}\n\nKey Decisions:\n${decisionsText || "None"}\n\nAction Items:\n${actionText2 || "None"}\n\nSentiment: ${sentiment}`,
+      );
+      const r5 = parseJSON<{ to: string; subject: string; body: string }>(raw5, "followup-email");
+      if (r5 && r5.body) {
+        followUpEmail = r5.body;
+      } else if (raw5 && raw5.length > 50) {
+        followUpEmail = raw5;
+      }
+    } catch (e) {
+      console.error("[Agent 5] Email generator error:", e);
+    }
 
     const result: MeetingAnalysis = {
       transcript,
