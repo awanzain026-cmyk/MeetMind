@@ -55,11 +55,11 @@ type Depth = "quick" | "standard" | "deep";
 type TabId = "summary" | "action-items" | "email" | "tasks";
 
 const PIPELINE_COLORS = [
-  { primary: "#7C3AED", bg: "rgba(124,58,237,0.08)", border: "rgba(124,58,237,0.25)", glow: "rgba(124,58,237,0.15)" },
+  { primary: "#6366f1", bg: "rgba(99,102,241,0.08)", border: "rgba(99,102,241,0.25)", glow: "rgba(99,102,241,0.15)" },
+  { primary: "#8b5cf6", bg: "rgba(139,92,246,0.08)", border: "rgba(139,92,246,0.25)", glow: "rgba(139,92,246,0.15)" },
+  { primary: "#06b6d4", bg: "rgba(6,182,212,0.08)", border: "rgba(6,182,212,0.25)", glow: "rgba(6,182,212,0.15)" },
   { primary: "#10b981", bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.25)", glow: "rgba(16,185,129,0.15)" },
   { primary: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.25)", glow: "rgba(245,158,11,0.15)" },
-  { primary: "#EC4899", bg: "rgba(236,72,153,0.08)", border: "rgba(236,72,153,0.25)", glow: "rgba(236,72,153,0.15)" },
-  { primary: "#06b6d4", bg: "rgba(6,182,212,0.08)", border: "rgba(6,182,212,0.25)", glow: "rgba(6,182,212,0.15)" },
 ];
 
 const agentSteps = [
@@ -70,7 +70,8 @@ const agentSteps = [
   { id: "followup-email" as const, label: "Generating Email", desc: "Drafting follow-up...", icon: Mail, color: PIPELINE_COLORS[4].primary, palette: PIPELINE_COLORS[4] },
 ];
 
-const AGENT_IDS = agentSteps.map((a) => a.id);
+type AgentId = (typeof agentSteps)[number]["id"];
+const AGENT_IDS = agentSteps.map((a) => a.id) as AgentId[];
 
 const tabConfig: { id: TabId; label: string; icon: typeof Sparkles }[] = [
   { id: "summary", label: "Summary", icon: Sparkles },
@@ -84,6 +85,12 @@ const depthOptions: { id: Depth; label: string; desc: string }[] = [
   { id: "standard", label: "Standard", desc: "~1min" },
   { id: "deep", label: "Deep", desc: "~2min" },
 ];
+
+const DEPTH_COLORS: Record<Depth, string> = {
+  quick: "#6366f1",
+  standard: "#8b5cf6",
+  deep: "#06b6d4",
+};
 
 function StatusBadge({ status, color }: { status: Agent["status"]; color: string }) {
   const map: Record<Agent["status"], { label: string; cls: string }> = {
@@ -291,45 +298,75 @@ export default function AnalyzePage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MeetingAnalysis | null>(null);
   const [agentStatuses, setAgentStatuses] = useState<Record<string, Agent["status"]>>({});
-  const [pipelineIdx, setPipelineIdx] = useState(-1);
+  const [pipelineDone, setPipelineDone] = useState(false);
+  const [resultsReady, setResultsReady] = useState(false);
   const [crash, setCrash] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("summary");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [apiData, setApiData] = useState<MeetingAnalysis | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [allDoneAt, setAllDoneAt] = useState<number | null>(null);
   const toast = useToast();
   const mountedRef = useRef(true);
   const abortRef = useRef(false);
-  const pipeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  // When all agents reach a terminal state (done/error) AND API has responded → show results or error
+  // 1-second fallback: if all agents done for >1s and API has responded, auto-transition
+  useEffect(() => {
+    if (!allDoneAt) return;
+    const elapsed = Date.now() - allDoneAt;
+    if (elapsed > 1000 && apiData) {
+      setResult(apiData);
+      setApiData(null);
+      setLoading(false);
+      setResultsReady(false);
+      setPipelineDone(false);
+      toast.add("Analysis complete! All 5 agents finished.");
+      return;
+    }
+    if (elapsed > 1000 && apiError) {
+      setError(apiError);
+      setApiError(null);
+      setLoading(false);
+      setResultsReady(false);
+      setPipelineDone(false);
+      toast.add(apiError || "Analysis failed", false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      if (apiData) {
+        setResult(apiData);
+        setApiData(null);
+        setLoading(false);
+        setResultsReady(false);
+        setPipelineDone(false);
+        toast.add("Analysis complete! All 5 agents finished.");
+      } else if (apiError) {
+        setError(apiError);
+        setApiError(null);
+        setLoading(false);
+        setResultsReady(false);
+        setPipelineDone(false);
+        toast.add(apiError || "Analysis failed", false);
+      }
+    }, Math.max(1, 1000 - elapsed));
+    return () => clearTimeout(timer);
+  }, [allDoneAt, apiData, apiError, toast]);
+
+  // Monitor pipeline completion from SSE
   useEffect(() => {
     if (!loading) return;
     const allTerminal = AGENT_IDS.every((id) => {
       const s = agentStatuses[id];
       return s === "done" || s === "error";
     });
-    if (!allTerminal) return;
-    if (!apiData && !apiError) return;
-
-    const timer = setTimeout(() => {
-      if (!mountedRef.current) return;
-      if (apiData) {
-        setResult(apiData);
-        setApiData(null);
-        toast.add("Analysis complete! All 5 agents finished.");
-      } else {
-        setError(apiError);
-        setApiError(null);
-        toast.add(apiError || "Analysis failed", false);
-      }
-      setLoading(false);
-    }, 600);
-
-    return () => clearTimeout(timer);
-  }, [loading, agentStatuses, apiData, apiError, toast]);
+    if (allTerminal && !allDoneAt) {
+      setAllDoneAt(Date.now());
+      setPipelineDone(true);
+    }
+  }, [loading, agentStatuses, allDoneAt]);
 
   const copyText = useCallback(async (text: string, id: string) => {
     try {
@@ -338,6 +375,12 @@ export default function AnalyzePage() {
       toast.add("Copied to clipboard!");
       setTimeout(() => setCopiedId(null), 2000);
     } catch { toast.add("Failed to copy", false); }
+  }, [toast]);
+
+  const openGmail = useCallback((subject: string, body: string) => {
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(gmailUrl, "_blank", "noopener,noreferrer");
+    toast.add("Opening Gmail compose...");
   }, [toast]);
 
   const handleAnalyze = useCallback(async () => {
@@ -350,35 +393,14 @@ export default function AnalyzePage() {
     setResult(null);
     setCrash(null);
     setTab("summary");
+    setPipelineDone(false);
+    setResultsReady(false);
+    setAllDoneAt(null);
 
     const initial: Record<string, Agent["status"]> = {};
     for (const id of AGENT_IDS) initial[id] = "idle";
     initial[AGENT_IDS[0]] = "running";
     setAgentStatuses(initial);
-    setPipelineIdx(0);
-
-    pipeIntervalRef.current = setInterval(() => {
-      if (abortRef.current) {
-        if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
-        return;
-      }
-      setPipelineIdx((prev) => {
-        const next = prev + 1;
-        if (next >= AGENT_IDS.length) {
-          if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
-          const done: Record<string, Agent["status"]> = {};
-          for (const id of AGENT_IDS) done[id] = "done";
-          setAgentStatuses(done);
-          return prev;
-        }
-        setAgentStatuses((s) => ({
-          ...s,
-          [AGENT_IDS[prev]]: "done",
-          [AGENT_IDS[next]]: "running",
-        }));
-        return next;
-      });
-    }, 1800);
 
     try {
       const res = await fetch("/api/analyze", {
@@ -387,26 +409,77 @@ export default function AnalyzePage() {
         body: JSON.stringify({ transcript: transcript.trim(), title: meetingTitle || "Meeting Analysis", depth }),
       });
 
-      let json: Record<string, unknown>;
-      try {
-        json = await res.json() as Record<string, unknown>;
-      } catch {
-        throw new Error(`Server returned ${res.status}: Invalid JSON response`);
+      if (!res.body) throw new Error("No response body");
+
+      let receivedCompleteOrError = false;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let eventType = "";
+          let dataStr = "";
+
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7);
+            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+          }
+
+          if (!dataStr || !eventType) continue;
+
+          try {
+            const sseData = JSON.parse(dataStr) as Record<string, unknown>;
+
+            if (eventType === "agent-status") {
+              const id = sseData.id as AgentId;
+              const status = sseData.status as Agent["status"];
+              if (id && status) {
+                setAgentStatuses((prev) => {
+                  const n = { ...prev };
+                  n[id] = status;
+                  const idx = AGENT_IDS.indexOf(id);
+                  if (status === "done" && idx >= 0 && idx < AGENT_IDS.length - 1) {
+                    n[AGENT_IDS[idx + 1]] = "running";
+                  }
+                  return n;
+                });
+              }
+            } else if (eventType === "complete" && sseData.success) {
+              receivedCompleteOrError = true;
+              const data = sseData.data as MeetingAnalysis;
+              if (data && mountedRef.current) {
+                setApiData(data);
+                setResultsReady(true);
+              }
+            } else if (eventType === "error") {
+              receivedCompleteOrError = true;
+              const msg = sseData.message as string;
+              if (mountedRef.current) {
+                setApiError(msg || "Unknown error from server");
+              }
+            }
+          } catch { /* ignore malformed SSE data */ }
+        }
       }
 
-      if (!json || json.success === false) {
-        throw new Error((json?.error as string) || `Server error (${res.status})`);
+      // Stream ended without complete/error — treat as error
+      if (!receivedCompleteOrError && mountedRef.current) {
+        setApiError("Connection closed before analysis completed");
       }
-
-      const data = json.data as MeetingAnalysis;
-      if (!mountedRef.current) return;
-      setApiData(data);
     } catch (err) {
-      if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
+      if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
       setApiError(msg);
-      // Mark running→error, idle→done so the pipeline reaches a terminal state
       setAgentStatuses((prev) => {
         const n = { ...prev };
         for (const k of AGENT_IDS) {
@@ -415,9 +488,19 @@ export default function AnalyzePage() {
         }
         return n;
       });
-      setPipelineIdx(AGENT_IDS.length - 1);
     }
   }, [transcript, meetingTitle, depth, loading, toast]);
+
+  const showResults = useCallback(() => {
+    if (apiData) {
+      setResult(apiData);
+      setApiData(null);
+      setLoading(false);
+      setResultsReady(false);
+      setPipelineDone(false);
+      toast.add("Analysis complete! All 5 agents finished.");
+    }
+  }, [apiData, toast]);
 
   if (crash) {
     return (
@@ -488,20 +571,23 @@ export default function AnalyzePage() {
 
                     <div className="mb-4">
                       <label className="mb-1.5 block text-sm font-medium text-text-primary">Transcript</label>
-                      <div className="relative overflow-hidden rounded-xl border-2 border-border focus-within:border-primary/40 transition-all duration-200">
-                        <textarea
-                          value={transcript}
-                          onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
-                          placeholder="Paste your meeting transcript here..."
-                          rows={12}
-                          className="w-full resize-none bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none"
-                        />
-                        <div className="flex items-center justify-between border-t border-border bg-surface2/50 px-4 py-2">
-                          <button onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors">
-                            <FileText className="h-3.5 w-3.5" /> Load Sample
-                          </button>
-                          <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
+                      {/* Gradient border textarea */}
+                      <div className="relative overflow-hidden rounded-xl p-[2px] bg-gradient-to-r from-[#6366f1] via-[#8b5cf6] to-[#06b6d4]">
+                        <div className="relative overflow-hidden rounded-[10px] bg-background">
+                          <textarea
+                            value={transcript}
+                            onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
+                            placeholder="Paste your meeting transcript here..."
+                            rows={12}
+                            className="w-full resize-none bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none"
+                          />
+                          <div className="flex items-center justify-between border-t border-border bg-surface2/50 px-4 py-2">
+                            <button onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
+                              className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors">
+                              <FileText className="h-3.5 w-3.5" /> Load Sample
+                            </button>
+                            <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
+                          </div>
                         </div>
                       </div>
                       {transcript.trim().split(/\s+/).length < 50 && transcript.trim().length > 0 && (
@@ -517,9 +603,15 @@ export default function AnalyzePage() {
                             className={cn(
                               "flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all duration-200",
                               depth === opt.id
-                                ? "border-primary/40 bg-primary/10 text-primary shadow-sm shadow-primary/10"
+                                ? "text-white shadow-sm"
                                 : "border-border bg-surface text-text-muted hover:border-primary/30 hover:text-text-primary",
-                            )}>
+                            )}
+                            style={depth === opt.id ? {
+                              borderColor: `${DEPTH_COLORS[opt.id]}40`,
+                              backgroundColor: `${DEPTH_COLORS[opt.id]}15`,
+                              color: DEPTH_COLORS[opt.id],
+                              boxShadow: `0 0 15px ${DEPTH_COLORS[opt.id]}20`,
+                            } : undefined}>
                             {opt.label}
                             <span className="text-[10px] opacity-60">{opt.desc}</span>
                           </button>
@@ -529,7 +621,13 @@ export default function AnalyzePage() {
 
                     <button onClick={handleAnalyze}
                       disabled={transcript.trim().split(/\s+/).length < 50 || loading}
-                      className="group relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-primary via-secondary to-accent px-6 py-3 text-sm font-medium text-white transition-all duration-300 hover:opacity-90 hover:shadow-lg hover:shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed">
+                      className="group relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-xl px-6 py-3 text-sm font-medium text-white transition-all duration-300 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        background: "linear-gradient(135deg, #6366f1, #8b5cf6, #06b6d4)",
+                        boxShadow: "0 4px 20px rgba(99,102,241,0.3)",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 30px rgba(99,102,241,0.5)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 20px rgba(99,102,241,0.3)"; }}>
                       <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                       <Zap className="h-4 w-4" /> Analyze Meeting <ArrowRight className="h-4 w-4" />
                     </button>
@@ -551,35 +649,13 @@ export default function AnalyzePage() {
                   </motion.div>
                   <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analyzing Your Meeting</h2>
                   <p className="mt-1 text-sm text-text-muted">
-                    Agent {Math.min(pipelineIdx + 1, AGENT_IDS.length)} of {AGENT_IDS.length}
-                    {pipelineIdx >= 0 && pipelineIdx < AGENT_IDS.length && ` — ${agentSteps[pipelineIdx].label}`}
+                    {pipelineDone ? "All agents finished" : `Processing...`}
                   </p>
                 </div>
 
                 <div className="glass-card p-4 sm:p-6 relative overflow-hidden">
                   <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] via-transparent to-accent/[0.02] pointer-events-none" />
                   <div className="relative z-10">
-                    {/* Progress bar */}
-                    <div className="mb-6">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-text-primary">Overall Progress</span>
-                        <span className="text-sm text-text-muted">{Math.round(((pipelineIdx + 1) / AGENT_IDS.length) * 100)}%</span>
-                      </div>
-                      <div className="relative h-2.5 overflow-hidden rounded-full bg-surface2">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: `${((pipelineIdx + 1) / AGENT_IDS.length) * 100}%` }}
-                          transition={{ duration: 0.6, ease: "easeOut" }}
-                          className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent"
-                        />
-                        <motion.div
-                          animate={{ x: ["0%", "100%"] }}
-                          transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
-                          className="absolute inset-y-0 w-8 rounded-full bg-white/15 blur-sm"
-                        />
-                      </div>
-                    </div>
-
                     {/* Pipeline */}
                     <div className="relative flex flex-col gap-4">
                       <PipelineSvg agentStatuses={agentStatuses} />
@@ -588,6 +664,29 @@ export default function AnalyzePage() {
                         return <AgentCard key={step.id} step={step} status={status} index={i} />;
                       })}
                     </div>
+
+                    {/* View Results button */}
+                    {pipelineDone && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-6 text-center"
+                      >
+                        {resultsReady ? (
+                          <button onClick={showResults}
+                            className="group relative inline-flex cursor-pointer items-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-[#6366f1] via-[#8b5cf6] to-[#06b6d4] px-8 py-3 text-sm font-medium text-white transition-all duration-300 hover:shadow-lg hover:shadow-[#6366f1]/30"
+                          >
+                            <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                            <CheckCircle className="h-4 w-4" /> View Results <ArrowRight className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 text-sm text-text-muted">
+                            <LoadingSpinner color="text-primary" size="sm" />
+                            Preparing your results...
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
                   </div>
                 </div>
               </motion.div>
@@ -734,18 +833,10 @@ export default function AnalyzePage() {
                           {copiedId === "copy-email" ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                           Copy
                         </button>
-                        {result.followUpEmail.length < 1800 ? (
-                          <a href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
-                            <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
-                          </a>
-                        ) : (
-                          <button onClick={() => copyText(result.followUpEmail, "copy-email-long")}
-                            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
-                            {copiedId === "copy-email-long" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                            Copy (email too long for Gmail link)
-                          </button>
-                        )}
+                        <button onClick={() => openGmail("Meeting Summary - " + (meetingTitle || "Follow-up"), result.followUpEmail)}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
+                          <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
+                        </button>
                       </div>
                     </div>
                     <div className="rounded-xl bg-background p-4">
