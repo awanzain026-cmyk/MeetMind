@@ -307,12 +307,61 @@ function ParticleBackground() {
   );
 }
 
-function HeroSection() {
+function ParallaxOrbs({ scrollY }: { scrollY: number }) {
   return (
-    <section className="relative flex min-h-screen items-center justify-center overflow-hidden pt-20 pb-16">
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* Large orb top left */}
+      <div
+        className="absolute -left-32 -top-32 h-96 w-96 rounded-full opacity-20"
+        style={{
+          background: "radial-gradient(circle, #6366f1 0%, transparent 70%)",
+          transform: `translateY(${scrollY * 0.2}px)`,
+          filter: "blur(60px)",
+        }}
+      />
+      {/* Large orb top right */}
+      <div
+        className="absolute -right-32 top-20 h-80 w-80 rounded-full opacity-15"
+        style={{
+          background: "radial-gradient(circle, #06b6d4 0%, transparent 70%)",
+          transform: `translateY(${scrollY * 0.15}px)`,
+          filter: "blur(60px)",
+        }}
+      />
+      {/* Medium orb center */}
+      <div
+        className="absolute left-1/2 top-1/3 h-64 w-64 -translate-x-1/2 rounded-full opacity-10"
+        style={{
+          background: "radial-gradient(circle, #8b5cf6 0%, transparent 70%)",
+          transform: `translateX(-50%) translateY(${scrollY * 0.1}px)`,
+          filter: "blur(40px)",
+        }}
+      />
+      {/* Animated floating shapes */}
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+        className="absolute right-20 top-40 h-32 w-32 opacity-5"
+        style={{ border: "1px solid #6366f1", borderRadius: "30% 70% 70% 30% / 30% 30% 70% 70%" }}
+      />
+      <motion.div
+        animate={{ rotate: -360 }}
+        transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+        className="absolute left-20 bottom-40 h-24 w-24 opacity-5"
+        style={{ border: "1px solid #06b6d4", borderRadius: "60% 40% 30% 70% / 60% 30% 70% 40%" }}
+      />
+    </div>
+  );
+}
+
+function HeroSection() {
+  const scrollY = useScrollPosition();
+  return (
+    <section className="relative flex min-h-screen items-center justify-center overflow-hidden pt-20 pb-32">
+      <ParallaxOrbs scrollY={scrollY} />
       <ParticleBackground />
       <div
-        className="pointer-events-none absolute inset-0 opacity-30"
+        className="pointer-events-none absolute inset-0 opacity-20"
         style={{
           backgroundImage:
             "radial-gradient(rgba(99,102,241,0.15) 1px, transparent 1px)",
@@ -444,54 +493,35 @@ function FloatingCards() {
     },
   ];
 
-  const initialPositions = [
-    { x: -180, y: 60, delay: 2.2 },
-    { x: 0, y: 80, delay: 2.5 },
-    { x: 180, y: 60, delay: 2.8 },
-  ];
+  const floatDelays = [2.2, 2.5, 2.8];
 
   return (
-    <div className="mt-16 hidden w-full max-w-4xl flex-col items-center gap-4 md:flex lg:flex-row lg:justify-center">
+    <div className="mt-16 hidden w-full max-w-4xl gap-4 md:grid md:grid-cols-3">
       {cardData.map((card, i) => (
         <motion.div
           key={card.title}
-          initial={{ opacity: 0, x: initialPositions[i].x, y: 40 }}
+          initial={{ opacity: 0, y: 40 }}
           animate={{
             opacity: 1,
-            x: initialPositions[i].x,
-            y: [initialPositions[i].y, initialPositions[i].y - 10, initialPositions[i].y],
+            y: [0, -10, 0],
           }}
           transition={{
-            opacity: { duration: 0.6, delay: initialPositions[i].delay },
-            x: { duration: 0.8, delay: initialPositions[i].delay, ease: "easeOut" },
+            opacity: { duration: 0.6, delay: floatDelays[i] },
             y: {
               duration: 4,
               repeat: Infinity,
               ease: "easeInOut",
-              delay: i * 0.3,
+              delay: i * 0.5 + 2.2,
             },
           }}
-          className="absolute w-64"
-          style={{ left: "50%" }}
         >
-          <Card className="p-4">
+          <Card className="p-4 h-full">
             <div className="mb-2 flex items-center gap-2">
-              <div
-                className={cn(
-                  "h-2 w-2 rounded-full bg-gradient-to-r",
-                  card.color,
-                )}
-              />
-              <span className="text-xs font-medium text-text-muted">
-                {card.label}
-              </span>
+              <div className={cn("h-2 w-2 rounded-full bg-gradient-to-r", card.color)} />
+              <span className="text-xs font-medium text-text-muted">{card.label}</span>
             </div>
-            <h4 className="mb-1 text-sm font-semibold text-text-primary">
-              {card.title}
-            </h4>
-            <p className="whitespace-pre-line text-xs leading-relaxed text-text-muted">
-              {card.content}
-            </p>
+            <h4 className="mb-1 text-sm font-semibold text-text-primary">{card.title}</h4>
+            <p className="whitespace-pre-line text-xs leading-relaxed text-text-muted">{card.content}</p>
           </Card>
         </motion.div>
       ))}
