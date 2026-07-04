@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowRight, Bot, Sparkles, FileText, AlertTriangle, CheckCircle,
   Clock, User, Target, CheckSquare, Mail, Zap, Brain, Activity,
-  Copy, Check, ExternalLink, ListTodo, X, Loader, Calendar,
+  Copy, Check, ExternalLink, ListTodo, X, Calendar,
 } from "lucide-react";
 import Link from "next/link";
 import type { MeetingAnalysis, Agent } from "@/lib/types";
@@ -54,15 +54,25 @@ Any questions? No? Great work everyone.`;
 type Depth = "quick" | "standard" | "deep";
 type TabId = "summary" | "action-items" | "email" | "tasks";
 
-const agentSteps = [
-  { id: "transcript-processor" as const, label: "Processing Transcript", icon: FileText, color: "#6366f1" },
-  { id: "action-item-extractor" as const, label: "Extracting Action Items", icon: CheckSquare, color: "#10b981" },
-  { id: "sentiment-analyzer" as const, label: "Analyzing Sentiment", icon: Activity, color: "#f59e0b" },
-  { id: "summary-writer" as const, label: "Writing Summary", icon: FileText, color: "#8b5cf6" },
-  { id: "followup-email" as const, label: "Generating Email", icon: Mail, color: "#06b6d4" },
+const PIPELINE_COLORS = [
+  { primary: "#7C3AED", bg: "rgba(124,58,237,0.08)", border: "rgba(124,58,237,0.25)", glow: "rgba(124,58,237,0.15)" },
+  { primary: "#10b981", bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.25)", glow: "rgba(16,185,129,0.15)" },
+  { primary: "#f59e0b", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.25)", glow: "rgba(245,158,11,0.15)" },
+  { primary: "#EC4899", bg: "rgba(236,72,153,0.08)", border: "rgba(236,72,153,0.25)", glow: "rgba(236,72,153,0.15)" },
+  { primary: "#06b6d4", bg: "rgba(6,182,212,0.08)", border: "rgba(6,182,212,0.25)", glow: "rgba(6,182,212,0.15)" },
 ];
 
-const tabConfig: { id: TabId; label: string; icon: typeof FileText }[] = [
+const agentSteps = [
+  { id: "transcript-processor" as const, label: "Processing Transcript", desc: "Cleaning & structuring transcript...", icon: FileText, color: PIPELINE_COLORS[0].primary, palette: PIPELINE_COLORS[0] },
+  { id: "action-item-extractor" as const, label: "Extracting Action Items", desc: "Finding tasks & owners...", icon: CheckSquare, color: PIPELINE_COLORS[1].primary, palette: PIPELINE_COLORS[1] },
+  { id: "sentiment-analyzer" as const, label: "Analyzing Sentiment", desc: "Detecting tone & emotions...", icon: Activity, color: PIPELINE_COLORS[2].primary, palette: PIPELINE_COLORS[2] },
+  { id: "summary-writer" as const, label: "Writing Summary", desc: "Generating key insights...", icon: FileText, color: PIPELINE_COLORS[3].primary, palette: PIPELINE_COLORS[3] },
+  { id: "followup-email" as const, label: "Generating Email", desc: "Drafting follow-up...", icon: Mail, color: PIPELINE_COLORS[4].primary, palette: PIPELINE_COLORS[4] },
+];
+
+const AGENT_IDS = agentSteps.map((a) => a.id);
+
+const tabConfig: { id: TabId; label: string; icon: typeof Sparkles }[] = [
   { id: "summary", label: "Summary", icon: Sparkles },
   { id: "action-items", label: "Action Items", icon: CheckSquare },
   { id: "email", label: "Email", icon: Mail },
@@ -75,63 +85,191 @@ const depthOptions: { id: Depth; label: string; desc: string }[] = [
   { id: "deep", label: "Deep", desc: "~2min" },
 ];
 
-function StatusBadge({ status }: { status: Agent["status"] }) {
-  const map: Record<Agent["status"], { label: string; color: string }> = {
-    idle: { label: "Pending", color: "bg-gray-700 text-gray-400" },
-    running: { label: "Running", color: "bg-indigo-500/20 text-indigo-300" },
-    done: { label: "Done", color: "bg-emerald-500/20 text-emerald-300" },
-    error: { label: "Error", color: "bg-red-500/20 text-red-300" },
+function StatusBadge({ status, color }: { status: Agent["status"]; color: string }) {
+  const map: Record<Agent["status"], { label: string; cls: string }> = {
+    idle: { label: "Pending", cls: "bg-zinc-800/50 text-zinc-500" },
+    running: { label: "Running", cls: "" },
+    done: { label: "Done", cls: "text-emerald-300" },
+    error: { label: "Error", cls: "bg-red-500/20 text-red-300" },
   };
   const s = map[status];
-  return <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", s.color)}>{s.label}</span>;
+  if (status === "running") {
+    return (
+      <span className="rounded-full px-2.5 py-0.5 text-[10px] font-medium"
+        style={{ backgroundColor: `${color}20`, color }}>
+        Running
+      </span>
+    );
+  }
+  return <span className={cn("rounded-full px-2.5 py-0.5 text-[10px] font-medium", s.cls)}>{s.label}</span>;
 }
 
-function LoadingSpinner({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const s = size === "sm" ? "h-4 w-4 border-2" : size === "lg" ? "h-8 w-8 border-[3px]" : "h-5 w-5 border-2";
+function LoadingSpinner({ color = "text-primary", size = "md" }: { color?: string; size?: string }) {
+  const s = size === "sm" ? "h-4 w-4 border-2" : "h-5 w-5 border-2";
   return (
     <motion.div
       animate={{ rotate: 360 }}
       transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-      className={cn("rounded-full border-current border-r-transparent text-primary", s)}
+      className={cn("rounded-full border-current border-r-transparent", s, color)}
     />
   );
 }
 
-/* ---- Toast ---- */
-let toastId = 0;
+let tid = 0;
 function useToast() {
-  const [toasts, setToasts] = useState<{ id: number; msg: string; variant: "success" | "error" }[]>([]);
-  const add = useCallback((msg: string, variant: "success" | "error" = "success") => {
-    const id = ++toastId;
-    setToasts((p) => [...p, { id, msg, variant }]);
-    setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 3000);
+  const [items, set] = useState<{ id: number; msg: string; ok: boolean }[]>([]);
+  const add = useCallback((msg: string, ok = true) => {
+    const id = ++tid;
+    set((p) => [...p, { id, msg, ok }]);
+    setTimeout(() => set((p) => p.filter((t) => t.id !== id)), 3000);
   }, []);
-  const dismiss = useCallback((id: number) => setToasts((p) => p.filter((t) => t.id !== id)), []);
-  return { toasts, add, dismiss };
+  const dismiss = useCallback((id: number) => set((p) => p.filter((t) => t.id !== id)), []);
+  return { items, add, dismiss };
 }
 
-function ToastBar({ toasts, dismiss }: { toasts: { id: number; msg: string; variant: string }[]; dismiss: (id: number) => void }) {
+function ToastBar({ items, dismiss }: { items: { id: number; msg: string; ok: boolean }[]; dismiss: (id: number) => void }) {
   return (
     <div className="pointer-events-none fixed right-4 top-20 z-[100] flex flex-col gap-2">
       <AnimatePresence>
-        {toasts.map((t) => (
+        {items.map((t) => (
           <motion.div
             key={t.id}
-            initial={{ opacity: 0, x: 80 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 80 }}
+            initial={{ opacity: 0, x: 80, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 80, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
             className={cn(
               "pointer-events-auto flex items-center gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm text-sm",
-              t.variant === "success" ? "border-success/20 bg-success/10 text-text-primary" : "border-error/20 bg-error/10 text-text-primary",
+              t.ok ? "border-primary/20 bg-primary/10" : "border-red-500/20 bg-red-500/10",
             )}
           >
-            {t.variant === "success" ? <Check className="h-4 w-4 text-success" /> : <AlertTriangle className="h-4 w-4 text-error" />}
+            {t.ok
+              ? <CheckCircle className="h-4 w-4 text-primary" />
+              : <AlertTriangle className="h-4 w-4 text-error" />}
             {t.msg}
-            <button onClick={() => dismiss(t.id)} className="ml-2 cursor-pointer text-text-muted hover:text-text-primary"><X className="h-3.5 w-3.5" /></button>
+            <button onClick={() => dismiss(t.id)} className="ml-2 cursor-pointer text-text-muted hover:text-text-primary transition-colors">
+              <X className="h-3.5 w-3.5" />
+            </button>
           </motion.div>
         ))}
       </AnimatePresence>
     </div>
+  );
+}
+
+function PipelineSvg({ agentStatuses }: { agentStatuses: Record<string, Agent["status"]> }) {
+  return (
+    <svg className="pointer-events-none absolute left-[23px] top-0 hidden h-full w-6 md:block"
+      style={{ height: `${agentSteps.length * 88 - 16}px`, marginTop: 0 }} aria-hidden="true">
+      {agentSteps.slice(0, -1).map((step, i) => {
+        const segDone = agentStatuses[step.id] === "done";
+        return (
+          <line
+            key={step.id}
+            x1="12" y1={52 + i * 88}
+            x2="12" y2={52 + (i + 1) * 88 - 16}
+            stroke={segDone ? step.color : "#1e293b"}
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={segDone ? "none" : "5 4"}
+            className="transition-all duration-700"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+function AgentCard({ step, status, index }: { step: typeof agentSteps[number]; status: Agent["status"]; index: number }) {
+  const isRunning = status === "running";
+  const isDone = status === "done";
+  const isError = status === "error";
+  const { palette, icon: Icon } = step;
+  const dotClr = isDone ? "text-emerald-400" : isRunning ? `text-[${palette.primary}]` : isError ? "text-error" : "text-zinc-600";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -24, scale: 0.95 }}
+      animate={{
+        opacity: 1, x: 0, scale: 1,
+        transition: { delay: index * 0.1, duration: 0.4, ease: "easeOut" },
+      }}
+      className={cn(
+        "relative flex items-center gap-4 rounded-xl border-2 p-4 transition-all duration-500",
+        isDone && "border-emerald-500/30 bg-emerald-500/5",
+        isRunning && "bg-surface2",
+        isError && "border-red-500/30 bg-red-500/5",
+        !isDone && !isRunning && !isError && "border-border bg-surface2/30",
+      )}
+      style={
+        isRunning ? {
+          borderColor: palette.border,
+          boxShadow: `0 0 30px ${palette.glow}, inset 0 0 30px ${palette.bg}`,
+        } : isDone ? {
+          boxShadow: `0 0 20px rgba(16,185,129,0.1)`,
+        } : undefined
+      }
+    >
+      {isRunning && (
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: [0.8, 1.5, 0.8], opacity: [0, 0.5, 0] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute inset-0 rounded-xl pointer-events-none"
+          style={{ border: `2px solid ${palette.border}` }}
+        />
+      )}
+
+      {/* Icon */}
+      <div
+        className={cn(
+          "relative z-10 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl transition-all duration-500",
+          isDone && "bg-emerald-500/20",
+          isRunning && "animate-pulse-ring",
+          isError && "bg-red-500/20",
+          !isDone && !isRunning && !isError && "bg-surface2",
+        )}
+        style={isRunning ? { backgroundColor: palette.bg, "--ring-color": `${palette.primary}40` } as React.CSSProperties : undefined}
+      >
+        {isDone ? (
+          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300 }}>
+            <CheckCircle className="h-6 w-6 text-emerald-400" />
+          </motion.div>
+        ) : isError ? (
+          <AlertTriangle className="h-6 w-6 text-error" />
+        ) : isRunning ? (
+          <LoadingSpinner size="sm" />
+        ) : (
+          <Icon className="h-5 w-5 text-zinc-500" />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className={cn(
+            "text-sm font-semibold",
+            isDone && "text-emerald-300",
+            isRunning && "text-text-primary",
+            isError && "text-error",
+            !isDone && !isRunning && !isError && "text-zinc-500",
+          )}>
+            {step.label}
+          </p>
+          {isDone && (
+            <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20">
+              <Check className="h-3 w-3 text-emerald-400" />
+            </motion.span>
+          )}
+        </div>
+        <p className={cn("text-xs mt-0.5", isRunning && "animate-pulse", isDone ? "text-emerald-400/60" : isRunning ? "text-zinc-400" : "text-zinc-600")}>
+          {isRunning ? step.desc : isDone ? "Completed" : isError ? "Failed" : "Waiting..."}
+        </p>
+      </div>
+
+      {/* Status badge */}
+      <StatusBadge status={status} color={palette.primary} />
+    </motion.div>
   );
 }
 
@@ -143,37 +281,122 @@ export default function AnalyzePage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MeetingAnalysis | null>(null);
   const [agentStatuses, setAgentStatuses] = useState<Record<string, Agent["status"]>>({});
+  const [pipelineIdx, setPipelineIdx] = useState(-1);
   const [crash, setCrash] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("summary");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const toast = useToast();
   const mountedRef = useRef(true);
+  const abortRef = useRef(false);
+  const apiDataRef = useRef<MeetingAnalysis | null>(null);
+  const apiErrorRef = useRef<string | null>(null);
+  const pipeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pipelineDoneRef = useRef(false);
 
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
+  const finishPipeline = useCallback(() => {
+    if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
+    pipelineDoneRef.current = true;
+    const done: Record<string, Agent["status"]> = {};
+    for (const id of AGENT_IDS) done[id] = "done";
+    setAgentStatuses(done);
+    setPipelineIdx(AGENT_IDS.length - 1);
+
+    setTimeout(() => {
+      if (!mountedRef.current) return;
+      if (apiDataRef.current) {
+        setResult(apiDataRef.current);
+        setLoading(false);
+        toast.add("Analysis complete! All 5 agents finished.");
+      } else if (apiErrorRef.current) {
+        setError(apiErrorRef.current);
+        setLoading(false);
+        toast.add("Analysis failed. Check the error.", false);
+      }
+    }, 500);
+  }, [toast]);
+
+  const advancePipeline = useCallback(() => {
+    setPipelineIdx((prev) => {
+      const next = prev + 1;
+      if (next >= AGENT_IDS.length) {
+        finishPipeline();
+        return prev;
+      }
+      setAgentStatuses((s) => ({
+        ...s,
+        [AGENT_IDS[prev]]: "done",
+        [AGENT_IDS[next]]: "running",
+      }));
+      return next;
+    });
+  }, [finishPipeline]);
 
   const copyText = useCallback(async (text: string, id: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
-      toast.add("Copied to clipboard!", "success");
+      toast.add("Copied to clipboard!");
       setTimeout(() => setCopiedId(null), 2000);
-    } catch { toast.add("Failed to copy", "error"); }
+    } catch { toast.add("Failed to copy", false); }
   }, [toast]);
 
   const handleAnalyze = useCallback(async () => {
     if (!transcript.trim() || loading) return;
+    abortRef.current = false;
+    apiDataRef.current = null;
+    apiErrorRef.current = null;
+    pipelineDoneRef.current = false;
     setLoading(true);
     setError(null);
     setResult(null);
     setCrash(null);
     setTab("summary");
-    setAgentStatuses({
-      "transcript-processor": "running",
-      "action-item-extractor": "idle",
-      "sentiment-analyzer": "idle",
-      "summary-writer": "idle",
-      "followup-email": "idle",
-    });
+
+    const initial: Record<string, Agent["status"]> = {};
+    for (const id of AGENT_IDS) initial[id] = "idle";
+    initial[AGENT_IDS[0]] = "running";
+    setAgentStatuses(initial);
+    setPipelineIdx(0);
+
+    pipeIntervalRef.current = setInterval(() => {
+      if (abortRef.current) {
+        if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
+        return;
+      }
+      setPipelineIdx((prev) => {
+        const next = prev + 1;
+        if (next >= AGENT_IDS.length) {
+          if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
+          pipelineDoneRef.current = true;
+          const done: Record<string, Agent["status"]> = {};
+          for (const id of AGENT_IDS) done[id] = "done";
+          setAgentStatuses(done);
+
+          setTimeout(() => {
+            if (!mountedRef.current) return;
+            if (apiDataRef.current) {
+              setResult(apiDataRef.current);
+              setLoading(false);
+              toast.add("Analysis complete! All 5 agents finished.");
+            } else if (apiErrorRef.current) {
+              setError(apiErrorRef.current);
+              setLoading(false);
+              toast.add("Analysis failed. Check the error.", false);
+            }
+          }, 500);
+
+          return prev;
+        }
+        setAgentStatuses((s) => ({
+          ...s,
+          [AGENT_IDS[prev]]: "done",
+          [AGENT_IDS[next]]: "running",
+        }));
+        return next;
+      });
+    }, 1800);
 
     try {
       const res = await fetch("/api/analyze", {
@@ -181,31 +404,57 @@ export default function AnalyzePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript: transcript.trim(), title: meetingTitle || "Meeting Analysis", depth }),
       });
-      const json = await res.json().catch(() => null) as Record<string, unknown>;
-      if (!json || json.success === false) throw new Error((json?.error as string) || `HTTP ${res.status}`);
+
+      let json: Record<string, unknown>;
+      try {
+        json = await res.json() as Record<string, unknown>;
+      } catch {
+        throw new Error(`Server returned ${res.status}: Invalid JSON response`);
+      }
+
+      if (!json || json.success === false) {
+        throw new Error((json?.error as string) || `Server error (${res.status})`);
+      }
+
       const data = json.data as MeetingAnalysis;
       if (!mountedRef.current) return;
-      setResult(data);
-      setAgentStatuses({
-        "transcript-processor": "done", "action-item-extractor": "done",
-        "sentiment-analyzer": "done", "summary-writer": "done", "followup-email": "done",
-      });
-      toast.add("Analysis complete!", "success");
+
+      apiDataRef.current = data;
+
+      if (pipelineDoneRef.current || pipelineIdx >= AGENT_IDS.length - 1) {
+        if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
+        pipelineDoneRef.current = true;
+        const done: Record<string, Agent["status"]> = {};
+        for (const id of AGENT_IDS) done[id] = "done";
+        setAgentStatuses(done);
+        setPipelineIdx(AGENT_IDS.length - 1);
+        await new Promise((r) => setTimeout(r, 400));
+        if (mountedRef.current) {
+          setResult(data);
+          setLoading(false);
+          toast.add("Analysis complete! All 5 agents finished.");
+        }
+      }
     } catch (err) {
+      if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
-      if (mountedRef.current) {
-        setError(msg);
-        setAgentStatuses((prev) => {
-          const next = { ...prev };
-          for (const key of Object.keys(next)) { if (next[key] === "running") next[key] = "error"; }
-          return next;
-        });
+      apiErrorRef.current = msg;
+
+      if (pipelineDoneRef.current || pipelineIdx >= AGENT_IDS.length - 1) {
+        if (mountedRef.current) {
+          setError(msg);
+          setLoading(false);
+          toast.add(msg, false);
+          setAgentStatuses((prev) => {
+            const n = { ...prev };
+            for (const k of AGENT_IDS) { if (n[k] === "running") n[k] = "error"; }
+            return n;
+          });
+        }
       }
-    } finally {
-      if (mountedRef.current) setLoading(false);
     }
-  }, [transcript, meetingTitle, depth, loading, toast]);
+  }, [transcript, meetingTitle, depth, loading, pipelineIdx, toast]);
 
   if (crash) {
     return (
@@ -214,7 +463,7 @@ export default function AnalyzePage() {
           <AlertTriangle className="mx-auto mb-4 h-12 w-12 text-error" />
           <h2 className="mb-2 text-xl font-bold text-text-primary">Something went wrong</h2>
           <p className="mb-6 text-sm text-text-muted">{crash}</p>
-          <Link href="/analyze" className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark">Try Again</Link>
+          <Link href="/analyze" className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">Try Again</Link>
         </div>
       </div>
     );
@@ -223,19 +472,20 @@ export default function AnalyzePage() {
   try {
     return (
       <>
-        <ToastBar toasts={toast.toasts} dismiss={toast.dismiss} />
+        <ToastBar items={toast.items} dismiss={toast.dismiss} />
         <div className="min-h-full bg-background">
           <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-              <Link href="/" className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
+              <Link href="/" className="flex items-center gap-2 group">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary group-hover:shadow-lg group-hover:shadow-primary/30 transition-all duration-300">
                   <Brain className="h-4 w-4 text-white" />
                 </div>
-                <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-lg font-bold text-transparent">MeetMind</span>
+                <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-lg font-bold text-transparent">MeetMind</span>
               </Link>
               <div className="flex items-center gap-3">
                 {(result && !loading) && (
-                  <button onClick={() => { setResult(null); setTranscript(""); setMeetingTitle(""); }} className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors">
+                  <button onClick={() => { setResult(null); setTranscript(""); setMeetingTitle(""); }}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted hover:text-text-primary hover:border-primary/30 transition-all">
                     <ArrowRight className="h-3 w-3" /> New
                   </button>
                 )}
@@ -245,167 +495,142 @@ export default function AnalyzePage() {
           </header>
 
           <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
-            {/* ---- INPUT ---- */}
+            {/* ====== INPUT PHASE ====== */}
             {!loading && !result && !error && (
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-3xl">
                 <div className="mb-8 text-center">
+                  <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6 }} className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 via-secondary/20 to-accent/20">
+                    <Brain className="h-8 w-8 text-primary" />
+                  </motion.div>
                   <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-3xl font-bold leading-tight sm:text-4xl lg:text-5xl">
                     <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent animate-gradient-shift">Analyze Your Meeting</span>
                   </motion.h1>
                   <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="mt-3 text-text-muted sm:text-lg">
-                    5 AI agents extract summaries, action items, decisions & more.
+                    5 colorful AI agents extract summaries, action items, decisions & more.
                   </motion.p>
                 </div>
 
-                <div className="glass-card p-4 sm:p-6">
-                  <div className="mb-4">
-                    <label className="mb-1.5 block text-sm font-medium text-text-primary">Meeting Title <span className="text-text-muted">(optional)</span></label>
-                    <input
-                      value={meetingTitle}
-                      onChange={(e) => setMeetingTitle(e.target.value)}
-                      placeholder="Q3 Product Roadmap Planning"
-                      className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-text-primary placeholder:text-text-dim outline-none transition-colors focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
-                    />
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="mb-1.5 block text-sm font-medium text-text-primary">Transcript</label>
-                    <div className="relative overflow-hidden rounded-xl border-2 border-border focus-within:border-primary/40 transition-all duration-200">
-                      <textarea
-                        value={transcript}
-                        onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
-                        placeholder="Paste your meeting transcript here..."
-                        rows={12}
-                        className="w-full resize-none bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none"
+                <div className="glass-card p-4 sm:p-6 relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] via-transparent to-accent/[0.02] pointer-events-none" />
+                  <div className="relative z-10">
+                    <div className="mb-4">
+                      <label className="mb-1.5 block text-sm font-medium text-text-primary">Meeting Title <span className="text-text-muted">(optional)</span></label>
+                      <input
+                        value={meetingTitle}
+                        onChange={(e) => setMeetingTitle(e.target.value)}
+                        placeholder="Q3 Product Roadmap Planning"
+                        className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-text-primary placeholder:text-text-dim outline-none transition-all focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
                       />
-                      <div className="flex items-center justify-between border-t border-border bg-surface2/50 px-4 py-2">
-                        <button
-                          onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
-                        >
-                          <FileText className="h-3.5 w-3.5" /> Load Sample
-                        </button>
-                        <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="mb-1.5 block text-sm font-medium text-text-primary">Transcript</label>
+                      <div className="relative overflow-hidden rounded-xl border-2 border-border focus-within:border-primary/40 transition-all duration-200">
+                        <textarea
+                          value={transcript}
+                          onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
+                          placeholder="Paste your meeting transcript here..."
+                          rows={12}
+                          className="w-full resize-none bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none"
+                        />
+                        <div className="flex items-center justify-between border-t border-border bg-surface2/50 px-4 py-2">
+                          <button onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
+                            className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors">
+                            <FileText className="h-3.5 w-3.5" /> Load Sample
+                          </button>
+                          <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
+                        </div>
+                      </div>
+                      {transcript.trim().split(/\s+/).length < 50 && transcript.trim().length > 0 && (
+                        <p className="mt-1.5 text-xs text-warning">Minimum 50 words required ({transcript.trim().split(/\s+/).length} words)</p>
+                      )}
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="mb-2 block text-sm font-medium text-text-primary">Analysis Depth</label>
+                      <div className="flex gap-2">
+                        {depthOptions.map((opt) => (
+                          <button key={opt.id} onClick={() => setDepth(opt.id)}
+                            className={cn(
+                              "flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all duration-200",
+                              depth === opt.id
+                                ? "border-primary/40 bg-primary/10 text-primary shadow-sm shadow-primary/10"
+                                : "border-border bg-surface text-text-muted hover:border-primary/30 hover:text-text-primary",
+                            )}>
+                            {opt.label}
+                            <span className="text-[10px] opacity-60">{opt.desc}</span>
+                          </button>
+                        ))}
                       </div>
                     </div>
-                    {transcript.trim().split(/\s+/).length < 50 && transcript.trim().length > 0 && (
-                      <p className="mt-1.5 text-xs text-warning">Minimum 50 words required ({transcript.trim().split(/\s+/).length} words)</p>
-                    )}
-                  </div>
 
-                  <div className="mb-4">
-                    <label className="mb-2 block text-sm font-medium text-text-primary">Analysis Depth</label>
-                    <div className="flex gap-2">
-                      {depthOptions.map((opt) => (
-                        <button
-                          key={opt.id}
-                          onClick={() => setDepth(opt.id)}
-                          className={cn(
-                            "flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all duration-200",
-                            depth === opt.id
-                              ? "border-primary/40 bg-primary/10 text-primary"
-                              : "border-border bg-surface text-text-muted hover:border-primary/30 hover:text-text-primary",
-                          )}
-                        >
-                          {opt.label}
-                          <span className="text-[10px] opacity-60">{opt.desc}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <button onClick={handleAnalyze}
+                      disabled={transcript.trim().split(/\s+/).length < 50 || loading}
+                      className="group relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-primary via-secondary to-accent px-6 py-3 text-sm font-medium text-white transition-all duration-300 hover:opacity-90 hover:shadow-lg hover:shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed">
+                      <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                      <Zap className="h-4 w-4" /> Analyze Meeting <ArrowRight className="h-4 w-4" />
+                    </button>
                   </div>
-
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={transcript.trim().split(/\s+/).length < 50 || loading}
-                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-6 py-3 text-sm font-medium text-white transition-all duration-200 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/25"
-                  >
-                    <Zap className="h-4 w-4" /> Analyze Meeting <ArrowRight className="h-4 w-4" />
-                  </button>
                 </div>
               </motion.div>
             )}
 
-            {/* ---- LOADING ---- */}
+            {/* ====== PIPELINE PHASE ====== */}
             {loading && (
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-2xl">
                 <div className="mb-8 text-center">
-                  <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 2, repeat: Infinity }} className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
-                    <Bot className="h-7 w-7 text-primary" />
+                  <motion.div
+                    animate={{ scale: [1, 1.08, 1] }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                    className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 via-secondary/20 to-accent/20"
+                  >
+                    <Bot className="h-8 w-8 text-primary" />
                   </motion.div>
                   <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analyzing Your Meeting</h2>
-                  <p className="mt-1 text-sm text-text-muted">5 AI agents processing your transcript</p>
+                  <p className="mt-1 text-sm text-text-muted">
+                    Agent {Math.min(pipelineIdx + 1, AGENT_IDS.length)} of {AGENT_IDS.length}
+                    {pipelineIdx >= 0 && pipelineIdx < AGENT_IDS.length && ` — ${agentSteps[pipelineIdx].label}`}
+                  </p>
                 </div>
 
-                <div className="glass-card p-4 sm:p-6">
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-text-primary">Progress</span>
-                      <span className="text-sm text-text-muted">{Object.values(agentStatuses).filter((s) => s === "done").length}/5</span>
-                    </div>
-                    <div className="relative h-2 overflow-hidden rounded-full bg-surface2">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(Object.values(agentStatuses).filter((s) => s === "done").length / 5) * 100}%` }}
-                        transition={{ duration: 0.5 }}
-                        className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="relative flex flex-col gap-4">
-                    {/* Connecting line SVG */}
-                    <svg className="pointer-events-none absolute left-[19px] top-0 h-full w-6" aria-hidden="true">
-                      {agentSteps.slice(0, -1).map((step, i) => (
-                        <line
-                          key={step.id}
-                          x1="12" y1={40 + i * 76 + 38}
-                          x2="12" y2={40 + (i + 1) * 76}
-                          stroke={agentStatuses[step.id] === "done" ? step.color : "#161822"}
-                          strokeWidth="2" strokeDasharray={agentStatuses[step.id] === "done" ? "none" : "4 3"}
-                          className="transition-all duration-700"
-                        />
-                      ))}
-                    </svg>
-
-                    {agentSteps.map((step, i) => {
-                      const status = agentStatuses[step.id] || "idle";
-                      const isRunning = status === "running";
-                      const isDone = status === "done";
-                      const isError = status === "error";
-                      return (
+                <div className="glass-card p-4 sm:p-6 relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] via-transparent to-accent/[0.02] pointer-events-none" />
+                  <div className="relative z-10">
+                    {/* Progress bar */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-text-primary">Overall Progress</span>
+                        <span className="text-sm text-text-muted">{Math.round(((pipelineIdx + 1) / AGENT_IDS.length) * 100)}%</span>
+                      </div>
+                      <div className="relative h-2.5 overflow-hidden rounded-full bg-surface2">
                         <motion.div
-                          key={step.id}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.1 }}
-                          className={cn(
-                            "relative flex items-start gap-4 rounded-xl border p-4 transition-all duration-500",
-                            isRunning ? "border-primary/30 bg-primary/5" : isDone ? "border-success/20 bg-success/5" : isError ? "border-error/20 bg-error/5" : "border-border bg-surface2/50",
-                          )}
-                          style={isRunning ? { boxShadow: `0 0 20px ${step.color}15` } : undefined}
-                        >
-                          <div className={cn(
-                            "relative z-10 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-300",
-                            isDone ? "bg-success/20" : isRunning ? "bg-primary/20" : isError ? "bg-error/20" : "bg-surface2",
-                            isRunning && "animate-pulse-ring",
-                          )}
-                            style={isRunning ? { "--ring-color": `${step.color}40` } as React.CSSProperties : undefined}
-                          >
-                            {isDone ? <CheckCircle className="h-4 w-4 text-success" /> : isError ? <AlertTriangle className="h-4 w-4 text-error" /> : isRunning ? <LoadingSpinner size="sm" /> : <step.icon className="h-4 w-4 text-text-dim" />}
-                          </div>
-                          <div className="flex-1 min-w-0 pt-1">
-                            <p className={cn("text-sm font-medium", isDone ? "text-success" : isRunning ? "text-text-primary" : isError ? "text-error" : "text-text-muted")}>{step.label}</p>
-                          </div>
-                          <StatusBadge status={status} />
-                        </motion.div>
-                      );
-                    })}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${((pipelineIdx + 1) / AGENT_IDS.length) * 100}%` }}
+                          transition={{ duration: 0.6, ease: "easeOut" }}
+                          className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent"
+                        />
+                        <motion.div
+                          animate={{ x: ["0%", "100%"] }}
+                          transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
+                          className="absolute inset-y-0 w-8 rounded-full bg-white/15 blur-sm"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Pipeline */}
+                    <div className="relative flex flex-col gap-4">
+                      <PipelineSvg agentStatuses={agentStatuses} />
+                      {agentSteps.map((step, i) => {
+                        const status = agentStatuses[step.id] || "idle";
+                        return <AgentCard key={step.id} step={step} status={status} index={i} />;
+                      })}
+                    </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* ---- ERROR ---- */}
+            {/* ====== ERROR PHASE ====== */}
             {error && !loading && (
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mx-auto max-w-lg text-center">
                 <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/15">
@@ -414,7 +639,8 @@ export default function AnalyzePage() {
                 <h2 className="mb-2 text-2xl font-bold text-text-primary">Analysis Failed</h2>
                 <p className="mb-6 text-sm text-text-muted">{error}</p>
                 <div className="flex items-center justify-center gap-3">
-                  <button onClick={() => setError(null)} className="flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
+                  <button onClick={() => setError(null)}
+                    className="flex cursor-pointer items-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-6 py-2.5 text-sm font-medium text-white hover:opacity-90 transition-all shadow-lg shadow-primary/20">
                     <ArrowRight className="h-4 w-4" /> Try Again
                   </button>
                   <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Back Home</Link>
@@ -422,12 +648,17 @@ export default function AnalyzePage() {
               </motion.div>
             )}
 
-            {/* ---- RESULTS ---- */}
+            {/* ====== RESULTS PHASE ====== */}
             {result && !loading && (
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} key="results">
                 <div className="mb-6 text-center">
-                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
-                    <CheckCircle className="h-6 w-6 text-success" />
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: [0, 1.2, 1] }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-secondary shadow-lg shadow-primary/25"
+                  >
+                    <CheckCircle className="h-7 w-7 text-white" />
                   </motion.div>
                   <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analysis Complete</h2>
                   <p className="text-sm text-text-muted">All 5 agents finished processing</p>
@@ -437,16 +668,13 @@ export default function AnalyzePage() {
                 <div className="mb-6 flex gap-1 rounded-xl border border-border bg-surface p-1">
                   {tabConfig.map((t) => {
                     const Icon = t.icon;
-                    const isActive = tab === t.id;
+                    const active = tab === t.id;
                     return (
-                      <button
-                        key={t.id}
-                        onClick={() => setTab(t.id)}
+                      <button key={t.id} onClick={() => setTab(t.id)}
                         className={cn(
                           "flex cursor-pointer flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200",
-                          isActive ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary",
-                        )}
-                      >
+                          active ? "bg-primary/10 text-primary shadow-sm" : "text-text-muted hover:text-text-primary",
+                        )}>
                         <Icon className="h-4 w-4" />
                         <span className="hidden sm:inline">{t.label}</span>
                       </button>
@@ -454,50 +682,51 @@ export default function AnalyzePage() {
                   })}
                 </div>
 
-                {/* Summary Tab */}
+                {/* Summary */}
                 {tab === "summary" && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary">
-                        <Sparkles className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-bold text-text-primary">Summary</h3>
-                        <p className="text-xs text-text-muted">Sentiment: {result.sentiment}</p>
-                      </div>
-                    </div>
-                    <p className="text-sm leading-relaxed text-text-muted whitespace-pre-line">{result.summary}</p>
-                    {result.decisions.length > 0 && (
-                      <div className="mt-6">
-                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
-                          <Target className="h-4 w-4 text-primary" /> Key Decisions
-                        </h4>
-                        <div className="flex flex-wrap gap-2">
-                          {result.decisions.map((d, i) => (
-                            <span key={i} className="rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted">{d}</span>
-                          ))}
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] via-transparent to-accent/[0.02] pointer-events-none" />
+                    <div className="relative z-10">
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary shadow-sm">
+                          <Sparkles className="h-5 w-5 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-text-primary">Summary</h3>
+                          <p className="text-xs text-text-muted">Sentiment: {result.sentiment}</p>
                         </div>
                       </div>
-                    )}
+                      <p className="text-sm leading-relaxed text-text-muted whitespace-pre-line">{result.summary}</p>
+                      {result.decisions.length > 0 && (
+                        <div className="mt-6">
+                          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+                            <Target className="h-4 w-4 text-primary" /> Key Decisions
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {result.decisions.map((d, i) => (
+                              <span key={i} className="rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted">{d}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
                 )}
 
-                {/* Action Items Tab */}
+                {/* Action Items */}
                 {tab === "action-items" && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
                     <div className="mb-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-success to-emerald-400">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-400 shadow-sm">
                           <CheckSquare className="h-5 w-5 text-white" />
                         </div>
                         <h3 className="text-lg font-bold text-text-primary">Action Items ({result.actionItems.length})</h3>
                       </div>
                       {result.actionItems.length > 0 && (
-                        <button
-                          onClick={() => copyText(result.actionItems.map((a) => `☐ ${a.task} — ${a.owner} [${a.priority}]`).join("\n"), "copy-actions")}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
-                        >
-                          {copiedId === "copy-actions" ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                        <button onClick={() => copyText(result.actionItems.map((a) => `☐ ${a.task} — ${a.owner} [${a.priority}]`).join("\n"), "copy-actions")}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary hover:border-primary/30 transition-all">
+                          {copiedId === "copy-actions" ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                           Copy All
                         </button>
                       )}
@@ -508,10 +737,7 @@ export default function AnalyzePage() {
                       <div className="flex flex-col gap-3">
                         {result.actionItems.map((item) => (
                           <div key={item.id} className="flex items-start gap-4 rounded-xl border border-border bg-surface2 p-4 hover:border-primary/20 transition-all">
-                            <div className={cn(
-                              "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full",
-                              item.priority === "high" ? "bg-error/10" : item.priority === "medium" ? "bg-warning/10" : "bg-success/10",
-                            )}>
+                            <div className={cn("flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full", item.priority === "high" ? "bg-red-500/10" : item.priority === "medium" ? "bg-amber-500/10" : "bg-emerald-500/10")}>
                               <CheckSquare className={cn("h-3.5 w-3.5", item.priority === "high" ? "text-error" : item.priority === "medium" ? "text-warning" : "text-success")} />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -519,10 +745,7 @@ export default function AnalyzePage() {
                               <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-text-muted">
                                 <span className="flex items-center gap-1"><User className="h-3 w-3" />{item.owner}</span>
                                 <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{item.deadline}</span>
-                                <span className={cn(
-                                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                                  item.priority === "high" ? "bg-error/10 text-error" : item.priority === "medium" ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
-                                )}>{item.priority}</span>
+                                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", item.priority === "high" ? "bg-red-500/10 text-error" : item.priority === "medium" ? "bg-amber-500/10 text-warning" : "bg-emerald-500/10 text-success")}>{item.priority}</span>
                               </div>
                             </div>
                           </div>
@@ -532,28 +755,24 @@ export default function AnalyzePage() {
                   </motion.div>
                 )}
 
-                {/* Email Tab */}
+                {/* Email */}
                 {tab === "email" && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
                     <div className="mb-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-cyan-400">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-cyan-400 shadow-sm">
                           <Mail className="h-5 w-5 text-white" />
                         </div>
                         <h3 className="text-lg font-bold text-text-primary">Follow-up Email</h3>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => copyText(result.followUpEmail, "copy-email")}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
-                        >
-                          {copiedId === "copy-email" ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                        <button onClick={() => copyText(result.followUpEmail, "copy-email")}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary hover:border-primary/30 transition-all">
+                          {copiedId === "copy-email" ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
                           Copy
                         </button>
-                        <a
-                          href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-dark transition-colors"
-                        >
+                        <a href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-all shadow-sm">
                           <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
                         </a>
                       </div>
@@ -564,11 +783,11 @@ export default function AnalyzePage() {
                   </motion.div>
                 )}
 
-                {/* Tasks Tab */}
+                {/* Tasks */}
                 {tab === "tasks" && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
                     <div className="mb-4 flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-warning to-amber-400">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-amber-400 shadow-sm">
                         <ListTodo className="h-5 w-5 text-white" />
                       </div>
                       <h3 className="text-lg font-bold text-text-primary">Tasks ({result.tasks.length})</h3>
@@ -579,18 +798,18 @@ export default function AnalyzePage() {
                       <div className="grid gap-4 sm:grid-cols-3">
                         {["todo", "in-progress", "done"].map((status) => {
                           const tasks = result.tasks.filter((t) => t.status === status);
-                          const statusColor = status === "todo" ? "border-primary/20" : status === "in-progress" ? "border-warning/20" : "border-success/20";
-                          const statusLabel = status === "todo" ? "To Do" : status === "in-progress" ? "In Progress" : "Done";
+                          const color = status === "todo" ? "border-primary/20" : status === "in-progress" ? "border-accent/20" : "border-emerald-500/20";
+                          const label = status === "todo" ? "To Do" : status === "in-progress" ? "In Progress" : "Done";
                           return (
-                            <div key={status} className={cn("rounded-xl border p-4", statusColor)}>
+                            <div key={status} className={cn("rounded-xl border p-4", color)}>
                               <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-2">
-                                <span className={cn("h-2 w-2 rounded-full", status === "todo" ? "bg-primary" : status === "in-progress" ? "bg-warning" : "bg-success")} />
-                                {statusLabel} ({tasks.length})
+                                <span className={cn("h-2 w-2 rounded-full", status === "todo" ? "bg-primary" : status === "in-progress" ? "bg-accent" : "bg-success")} />
+                                {label} ({tasks.length})
                               </h4>
                               <div className="flex flex-col gap-2">
                                 {tasks.length === 0 && <p className="text-xs text-text-dim">No tasks</p>}
                                 {tasks.map((task) => (
-                                  <div key={task.id} className="rounded-lg border border-border bg-surface2 p-3">
+                                  <div key={task.id} className="rounded-lg border border-border bg-surface2 p-3 hover:border-primary/20 transition-all">
                                     <p className="text-xs font-medium text-text-primary">{task.title}</p>
                                     <div className="mt-1.5 flex items-center gap-2 text-[10px] text-text-muted">
                                       <span className="flex items-center gap-1"><User className="h-2.5 w-2.5" />{task.assignee}</span>

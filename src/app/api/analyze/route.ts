@@ -24,33 +24,48 @@ function validate(body: unknown): { transcript: string; depth: string } {
 }
 
 async function callAI(systemPrompt: string, userContent: string): Promise<string> {
-  const res = await fetch(SODEOM_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${BEARER}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Sodeom API error ${res.status}: ${text.slice(0, 200)}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const res = await fetch(SODEOM_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${BEARER}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Sodeom API error ${res.status}: ${text.slice(0, 200)}`);
+    }
+
+    const data: unknown = await res.json();
+    if (!data || typeof data !== "object") throw new Error("Invalid API response");
+    const choices = (data as Record<string, unknown>).choices;
+    if (!Array.isArray(choices) || !choices[0]) throw new Error("No choices in response");
+    const message = (choices[0] as Record<string, unknown>).message;
+    if (!message || typeof message !== "object") throw new Error("No message in choice");
+    const content = (message as Record<string, unknown>).content;
+    if (typeof content !== "string") throw new Error("No content in message");
+    return content;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("API request timed out after 60s. Try a shorter transcript or Quick depth.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  const data: unknown = await res.json();
-  if (!data || typeof data !== "object") throw new Error("Invalid API response");
-  const choices = (data as Record<string, unknown>).choices;
-  if (!Array.isArray(choices) || !choices[0]) throw new Error("No choices in response");
-  const message = (choices[0] as Record<string, unknown>).message;
-  if (!message || typeof message !== "object") throw new Error("No message in choice");
-  const content = (message as Record<string, unknown>).content;
-  if (typeof content !== "string") throw new Error("No content in message");
-  return content;
 }
 
 function parseJSON<T>(text: string, label: string): T {
