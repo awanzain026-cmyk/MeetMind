@@ -163,9 +163,13 @@ export default function Home() {
       <main className="flex-1">
         <HeroSection />
         <StatsSection />
+        <SectionDivider color="#6366f1" />
         <FeaturesSection />
+        <SectionDivider color="#8b5cf6" />
         <HowItWorksSection />
+        <SectionDivider color="#06b6d4" />
         <AgentsSection />
+        <SectionDivider color="#6366f1" />
         <CTASection />
       </main>
 
@@ -562,6 +566,19 @@ function StatsSection() {
   );
 }
 
+function SectionDivider({ color = "#6366f1" }: { color?: string }) {
+  return (
+    <div className="relative mx-auto max-w-6xl px-4">
+      <div
+        className="h-px w-full opacity-20"
+        style={{
+          background: `linear-gradient(to right, transparent, ${color}, transparent)`,
+        }}
+      />
+    </div>
+  );
+}
+
 function FeaturesSection() {
   const features = [
     {
@@ -616,8 +633,12 @@ function FeaturesSection() {
 
   return (
     <FadeInSection>
-      <section id="features" className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8">
+      <section id="features" className="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8">
+        <div className="pointer-events-none absolute inset-0 opacity-30" style={{
+          background: "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,0.05) 0%, transparent 70%)"
+        }} />
         <div className="mb-14 text-center">
+          <span className="mb-3 inline-block rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">Features</span>
           <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">
             Everything Your Team Needs
           </h2>
