@@ -265,9 +265,52 @@ function Navbar({
   );
 }
 
+function ParticleBackground() {
+  const particles = Array.from({ length: 30 }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    dx: (Math.random() - 0.5) * 60,
+    dy: (Math.random() - 0.5) * -60,
+    size: Math.random() * 3 + 1,
+    delay: Math.random() * 5,
+    duration: Math.random() * 4 + 4,
+  }));
+
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {particles.map((p) => (
+        <motion.div
+          key={p.id}
+          className="absolute rounded-full bg-primary/20"
+          style={{
+            left: `${p.x}%`,
+            top: `${p.y}%`,
+            width: p.size,
+            height: p.size,
+          }}
+          animate={{
+            x: [0, p.dx],
+            y: [0, p.dy],
+            opacity: [0, 0.8, 0],
+            scale: [0, 1, 0.5],
+          }}
+          transition={{
+            duration: p.duration,
+            repeat: Infinity,
+            delay: p.delay,
+            ease: "easeInOut",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function HeroSection() {
   return (
     <section className="relative flex min-h-screen items-center justify-center overflow-hidden pt-20 pb-16">
+      <ParticleBackground />
       <div
         className="pointer-events-none absolute inset-0 opacity-30"
         style={{
@@ -713,86 +756,125 @@ function AgentsSection() {
           </p>
         </div>
 
-        <div
-          ref={containerRef}
-          className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory scrollbar-none md:grid md:grid-cols-5 md:overflow-visible"
-        >
-          {AGENTS.map((agent, i) => {
-            const Icon = iconMap[agent.icon] || Brain;
-            const isActive = i === activeIndex;
-            const isHovered = i === hoveredIndex;
+        <div className="relative">
+          {/* Pipeline connecting SVG between agents */}
+          <svg
+            className="pointer-events-none absolute left-0 right-0 top-12 hidden h-full w-full md:block"
+            preserveAspectRatio="none"
+            style={{ height: `${AGENTS.length * 100}px` }}
+          >
+            {AGENTS.slice(0, -1).map((agent, i) => {
+              const isActiveAgent = i === activeIndex || i + 1 === activeIndex;
+              return (
+                <line
+                  key={agent.id}
+                  x1={`${(i + 0.5) * 20}%`}
+                  y1="50"
+                  x2={`${(i + 1.5) * 20}%`}
+                  y2="50"
+                  stroke={isActiveAgent ? agent.color : "#161822"}
+                  strokeWidth="2"
+                  strokeDasharray={isActiveAgent ? "none" : "4 3"}
+                  className="transition-all duration-700"
+                />
+              );
+            })}
+          </svg>
 
-            return (
-              <motion.div
-                key={agent.id}
-                initial={{ opacity: 0, y: 30 }}
-                animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-                onMouseEnter={() => setHoveredIndex(i)}
-                onMouseLeave={() => setHoveredIndex(null)}
-                onClick={() => setActiveIndex(i)}
-                className={cn(
-                  "relative min-w-[220px] flex-shrink-0 snap-start cursor-pointer overflow-hidden rounded-2xl border p-5 transition-all duration-300",
-                  isActive || isHovered
-                    ? "bg-surface shadow-lg shadow-primary/5 animate-border-glow"
-                    : "border-border bg-surface/50",
-                )}
-                style={
-                  isActive || isHovered
-                    ? { boxShadow: `0 0 30px ${agent.color}20` }
-                    : undefined
-                }
-              >
-                {(isActive || isHovered) && (
-                  <motion.div
-                    layoutId="agent-glow"
-                    className="pointer-events-none absolute inset-0 opacity-10"
-                    style={{
-                      background: `radial-gradient(circle at 50% 0%, ${agent.color} 0%, transparent 70%)`,
-                    }}
-                  />
-                )}
+          <div
+            ref={containerRef}
+            className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory scrollbar-none md:grid md:grid-cols-5 md:overflow-visible"
+          >
+            {AGENTS.map((agent, i) => {
+              const Icon = iconMap[agent.icon] || Brain;
+              const isActive = i === activeIndex;
+              const isHovered = i === hoveredIndex;
 
+              return (
                 <motion.div
-                  animate={
-                    isActive
-                      ? {
-                          scale: [1, 1.08, 1],
-                          transition: { duration: 2, repeat: Infinity },
-                        }
-                      : {}
-                  }
+                  key={agent.id}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
+                  transition={{ duration: 0.5, delay: i * 0.1 }}
+                  onMouseEnter={() => setHoveredIndex(i)}
+                  onMouseLeave={() => setHoveredIndex(null)}
+                  onClick={() => setActiveIndex(i)}
                   className={cn(
-                    "mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg",
+                    "relative min-w-[220px] flex-shrink-0 snap-start cursor-pointer overflow-hidden rounded-2xl border p-5 transition-all duration-300",
+                    isActive || isHovered
+                      ? "bg-surface shadow-lg shadow-primary/5 animate-border-glow"
+                      : "border-border bg-surface/50",
                   )}
-                  style={{ backgroundColor: `${agent.color}20` }}
+                  style={
+                    isActive || isHovered
+                      ? { boxShadow: `0 0 30px ${agent.color}20` }
+                      : undefined
+                  }
                 >
-                  <Icon className="h-5 w-5" style={{ color: agent.color }} />
-                </motion.div>
+                  {(isActive || isHovered) && (
+                    <motion.div
+                      layoutId="agent-glow"
+                      className="pointer-events-none absolute inset-0 opacity-10"
+                      style={{
+                        background: `radial-gradient(circle at 50% 0%, ${agent.color} 0%, transparent 70%)`,
+                      }}
+                    />
+                  )}
 
-                <h3 className="mb-1 text-sm font-semibold text-text-primary">
-                  {agent.name}
-                </h3>
-                <p className="mb-3 text-xs leading-relaxed text-text-muted">
-                  {agent.role}
-                </p>
-                <p className="text-xs italic text-text-dim">
-                  Specialized in{" "}
-                  {agent.description.split(".")[0]?.toLowerCase() ?? "meeting analysis"}
-                </p>
-
-                {isActive && (
                   <motion.div
-                    initial={{ scaleX: 0 }}
-                    animate={{ scaleX: 1 }}
-                    transition={{ duration: 3, repeat: Infinity }}
-                    className="absolute bottom-0 left-0 h-0.5 w-full origin-left"
-                    style={{ backgroundColor: agent.color }}
-                  />
-                )}
-              </motion.div>
-            );
-          })}
+                    animate={
+                      isActive
+                        ? {
+                            scale: [1, 1.08, 1],
+                            transition: { duration: 2, repeat: Infinity },
+                          }
+                        : {}
+                    }
+                    className={cn(
+                      "mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg",
+                    )}
+                    style={{ backgroundColor: `${agent.color}20` }}
+                  >
+                    <Icon className="h-5 w-5" style={{ color: agent.color }} />
+                  </motion.div>
+
+                  {isActive && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute -inset-1 rounded-2xl border-2"
+                      style={{
+                        borderColor: `${agent.color}40`,
+                        animation: "pulse-ring 2s ease-out infinite",
+                        "--ring-color": `${agent.color}40`,
+                      } as React.CSSProperties}
+                    />
+                  )}
+
+                  <h3 className="mb-1 text-sm font-semibold text-text-primary">
+                    {agent.name}
+                  </h3>
+                  <p className="mb-3 text-xs leading-relaxed text-text-muted">
+                    {agent.role}
+                  </p>
+                  <p className="text-xs italic text-text-dim">
+                    Specialized in{" "}
+                    {agent.description.split(".")[0]?.toLowerCase() ?? "meeting analysis"}
+                  </p>
+
+                  {isActive && (
+                    <motion.div
+                      initial={{ scaleX: 0 }}
+                      animate={{ scaleX: 1 }}
+                      transition={{ duration: 3, repeat: Infinity }}
+                      className="absolute bottom-0 left-0 h-0.5 w-full origin-left"
+                      style={{ backgroundColor: agent.color }}
+                    />
+                  )}
+                </motion.div>
+              );
+            })}
+          </div>
         </div>
       </section>
     </FadeInSection>

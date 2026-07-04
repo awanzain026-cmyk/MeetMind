@@ -2,9 +2,15 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Bot, Sparkles, FileText, AlertTriangle, CheckCircle, Clock, User, Target, CheckSquare, Mail, Zap, Brain, Activity } from "lucide-react";
+import {
+  ArrowRight, Bot, Sparkles, FileText, AlertTriangle, CheckCircle,
+  Clock, User, Target, CheckSquare, Mail, Zap, Brain, Activity,
+  Copy, Check, ExternalLink, ListTodo, X, Loader, Calendar,
+} from "lucide-react";
 import Link from "next/link";
 import type { MeetingAnalysis, Agent } from "@/lib/types";
+
+const cn = (...classes: (string | boolean | undefined | null)[]) => classes.filter(Boolean).join(" ");
 
 const SAMPLE_TRANSCRIPT = `Meeting: Q3 Product Roadmap Planning
 Date: March 15, 2024
@@ -45,17 +51,29 @@ Sarah: Okay, I think we have a solid plan. Let me summarize the action items:
 7. Sarah — Schedule follow-up meeting for Monday
 Any questions? No? Great work everyone.`;
 
+type Depth = "quick" | "standard" | "deep";
+type TabId = "summary" | "action-items" | "email" | "tasks";
+
 const agentSteps = [
-  { id: "transcript-processor", label: "Processing Transcript", icon: FileText, color: "#6366f1" },
-  { id: "action-item-extractor", label: "Extracting Action Items", icon: CheckSquare, color: "#10b981" },
-  { id: "sentiment-analyzer", label: "Analyzing Sentiment", icon: Activity, color: "#f59e0b" },
-  { id: "summary-writer", label: "Writing Summary", icon: FileText, color: "#8b5cf6" },
-  { id: "followup-email", label: "Generating Email", icon: Mail, color: "#06b6d4" },
+  { id: "transcript-processor" as const, label: "Processing Transcript", icon: FileText, color: "#6366f1" },
+  { id: "action-item-extractor" as const, label: "Extracting Action Items", icon: CheckSquare, color: "#10b981" },
+  { id: "sentiment-analyzer" as const, label: "Analyzing Sentiment", icon: Activity, color: "#f59e0b" },
+  { id: "summary-writer" as const, label: "Writing Summary", icon: FileText, color: "#8b5cf6" },
+  { id: "followup-email" as const, label: "Generating Email", icon: Mail, color: "#06b6d4" },
 ];
 
-function cn(...classes: (string | boolean | undefined | null)[]) {
-  return classes.filter(Boolean).join(" ");
-}
+const tabConfig: { id: TabId; label: string; icon: typeof FileText }[] = [
+  { id: "summary", label: "Summary", icon: Sparkles },
+  { id: "action-items", label: "Action Items", icon: CheckSquare },
+  { id: "email", label: "Email", icon: Mail },
+  { id: "tasks", label: "Tasks", icon: ListTodo },
+];
+
+const depthOptions: { id: Depth; label: string; desc: string }[] = [
+  { id: "quick", label: "Quick", desc: "~30s" },
+  { id: "standard", label: "Standard", desc: "~1min" },
+  { id: "deep", label: "Deep", desc: "~2min" },
+];
 
 function StatusBadge({ status }: { status: Agent["status"] }) {
   const map: Record<Agent["status"], { label: string; color: string }> = {
@@ -79,19 +97,68 @@ function LoadingSpinner({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   );
 }
 
+/* ---- Toast ---- */
+let toastId = 0;
+function useToast() {
+  const [toasts, setToasts] = useState<{ id: number; msg: string; variant: "success" | "error" }[]>([]);
+  const add = useCallback((msg: string, variant: "success" | "error" = "success") => {
+    const id = ++toastId;
+    setToasts((p) => [...p, { id, msg, variant }]);
+    setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 3000);
+  }, []);
+  const dismiss = useCallback((id: number) => setToasts((p) => p.filter((t) => t.id !== id)), []);
+  return { toasts, add, dismiss };
+}
+
+function ToastBar({ toasts, dismiss }: { toasts: { id: number; msg: string; variant: string }[]; dismiss: (id: number) => void }) {
+  return (
+    <div className="pointer-events-none fixed right-4 top-20 z-[100] flex flex-col gap-2">
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, x: 80 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 80 }}
+            className={cn(
+              "pointer-events-auto flex items-center gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm text-sm",
+              t.variant === "success" ? "border-success/20 bg-success/10 text-text-primary" : "border-error/20 bg-error/10 text-text-primary",
+            )}
+          >
+            {t.variant === "success" ? <Check className="h-4 w-4 text-success" /> : <AlertTriangle className="h-4 w-4 text-error" />}
+            {t.msg}
+            <button onClick={() => dismiss(t.id)} className="ml-2 cursor-pointer text-text-muted hover:text-text-primary"><X className="h-3.5 w-3.5" /></button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function AnalyzePage() {
   const [transcript, setTranscript] = useState("");
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [depth, setDepth] = useState<Depth>("standard");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MeetingAnalysis | null>(null);
   const [agentStatuses, setAgentStatuses] = useState<Record<string, Agent["status"]>>({});
-  const [currentAgent, setCurrentAgent] = useState<string | null>(null);
   const [crash, setCrash] = useState<string | null>(null);
+  const [tab, setTab] = useState<TabId>("summary");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const toast = useToast();
   const mountedRef = useRef(true);
 
-  useEffect(() => {
-    return () => { mountedRef.current = false; };
-  }, []);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
+  const copyText = useCallback(async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      toast.add("Copied to clipboard!", "success");
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch { toast.add("Failed to copy", "error"); }
+  }, [toast]);
 
   const handleAnalyze = useCallback(async () => {
     if (!transcript.trim() || loading) return;
@@ -99,6 +166,7 @@ export default function AnalyzePage() {
     setError(null);
     setResult(null);
     setCrash(null);
+    setTab("summary");
     setAgentStatuses({
       "transcript-processor": "running",
       "action-item-extractor": "idle",
@@ -106,31 +174,23 @@ export default function AnalyzePage() {
       "summary-writer": "idle",
       "followup-email": "idle",
     });
-    setCurrentAgent("transcript-processor");
 
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: transcript.trim(), title: "Meeting Analysis", depth: "standard" }),
+        body: JSON.stringify({ transcript: transcript.trim(), title: meetingTitle || "Meeting Analysis", depth }),
       });
-
       const json = await res.json().catch(() => null) as Record<string, unknown>;
-      if (!json || json.success === false) {
-        throw new Error((json?.error as string) || `HTTP ${res.status}`);
-      }
-
+      if (!json || json.success === false) throw new Error((json?.error as string) || `HTTP ${res.status}`);
       const data = json.data as MeetingAnalysis;
       if (!mountedRef.current) return;
       setResult(data);
       setAgentStatuses({
-        "transcript-processor": "done",
-        "action-item-extractor": "done",
-        "sentiment-analyzer": "done",
-        "summary-writer": "done",
-        "followup-email": "done",
+        "transcript-processor": "done", "action-item-extractor": "done",
+        "sentiment-analyzer": "done", "summary-writer": "done", "followup-email": "done",
       });
-      setCurrentAgent(null);
+      toast.add("Analysis complete!", "success");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
@@ -138,16 +198,14 @@ export default function AnalyzePage() {
         setError(msg);
         setAgentStatuses((prev) => {
           const next = { ...prev };
-          for (const key of Object.keys(next)) {
-            if (next[key] === "running") next[key] = "error";
-          }
+          for (const key of Object.keys(next)) { if (next[key] === "running") next[key] = "error"; }
           return next;
         });
       }
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [transcript, loading]);
+  }, [transcript, meetingTitle, depth, loading, toast]);
 
   if (crash) {
     return (
@@ -156,9 +214,7 @@ export default function AnalyzePage() {
           <AlertTriangle className="mx-auto mb-4 h-12 w-12 text-error" />
           <h2 className="mb-2 text-xl font-bold text-text-primary">Something went wrong</h2>
           <p className="mb-6 text-sm text-text-muted">{crash}</p>
-          <Link href="/analyze" className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark">
-            Try Again
-          </Link>
+          <Link href="/analyze" className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark">Try Again</Link>
         </div>
       </div>
     );
@@ -166,305 +222,406 @@ export default function AnalyzePage() {
 
   try {
     return (
-      <AnalyzeInner
-        transcript={transcript}
-        setTranscript={setTranscript}
-        loading={loading}
-        error={error}
-        result={result}
-        agentStatuses={agentStatuses}
-        currentAgent={currentAgent}
-        handleAnalyze={handleAnalyze}
-        setCrash={setCrash}
-        onRetry={() => setError(null)}
-        onNew={() => { setResult(null); setTranscript(""); }}
-      />
+      <>
+        <ToastBar toasts={toast.toasts} dismiss={toast.dismiss} />
+        <div className="min-h-full bg-background">
+          <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
+            <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+              <Link href="/" className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
+                  <Brain className="h-4 w-4 text-white" />
+                </div>
+                <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-lg font-bold text-transparent">MeetMind</span>
+              </Link>
+              <div className="flex items-center gap-3">
+                {(result && !loading) && (
+                  <button onClick={() => { setResult(null); setTranscript(""); setMeetingTitle(""); }} className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors">
+                    <ArrowRight className="h-3 w-3" /> New
+                  </button>
+                )}
+                <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Home</Link>
+              </div>
+            </div>
+          </header>
+
+          <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+            {/* ---- INPUT ---- */}
+            {!loading && !result && !error && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-3xl">
+                <div className="mb-8 text-center">
+                  <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-3xl font-bold leading-tight sm:text-4xl lg:text-5xl">
+                    <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent animate-gradient-shift">Analyze Your Meeting</span>
+                  </motion.h1>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="mt-3 text-text-muted sm:text-lg">
+                    5 AI agents extract summaries, action items, decisions & more.
+                  </motion.p>
+                </div>
+
+                <div className="glass-card p-4 sm:p-6">
+                  <div className="mb-4">
+                    <label className="mb-1.5 block text-sm font-medium text-text-primary">Meeting Title <span className="text-text-muted">(optional)</span></label>
+                    <input
+                      value={meetingTitle}
+                      onChange={(e) => setMeetingTitle(e.target.value)}
+                      placeholder="Q3 Product Roadmap Planning"
+                      className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-text-primary placeholder:text-text-dim outline-none transition-colors focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="mb-1.5 block text-sm font-medium text-text-primary">Transcript</label>
+                    <div className="relative overflow-hidden rounded-xl border-2 border-border focus-within:border-primary/40 transition-all duration-200">
+                      <textarea
+                        value={transcript}
+                        onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
+                        placeholder="Paste your meeting transcript here..."
+                        rows={12}
+                        className="w-full resize-none bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none"
+                      />
+                      <div className="flex items-center justify-between border-t border-border bg-surface2/50 px-4 py-2">
+                        <button
+                          onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+                        >
+                          <FileText className="h-3.5 w-3.5" /> Load Sample
+                        </button>
+                        <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
+                      </div>
+                    </div>
+                    {transcript.trim().split(/\s+/).length < 50 && transcript.trim().length > 0 && (
+                      <p className="mt-1.5 text-xs text-warning">Minimum 50 words required ({transcript.trim().split(/\s+/).length} words)</p>
+                    )}
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="mb-2 block text-sm font-medium text-text-primary">Analysis Depth</label>
+                    <div className="flex gap-2">
+                      {depthOptions.map((opt) => (
+                        <button
+                          key={opt.id}
+                          onClick={() => setDepth(opt.id)}
+                          className={cn(
+                            "flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all duration-200",
+                            depth === opt.id
+                              ? "border-primary/40 bg-primary/10 text-primary"
+                              : "border-border bg-surface text-text-muted hover:border-primary/30 hover:text-text-primary",
+                          )}
+                        >
+                          {opt.label}
+                          <span className="text-[10px] opacity-60">{opt.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={transcript.trim().split(/\s+/).length < 50 || loading}
+                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-6 py-3 text-sm font-medium text-white transition-all duration-200 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/25"
+                  >
+                    <Zap className="h-4 w-4" /> Analyze Meeting <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ---- LOADING ---- */}
+            {loading && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-2xl">
+                <div className="mb-8 text-center">
+                  <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 2, repeat: Infinity }} className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                    <Bot className="h-7 w-7 text-primary" />
+                  </motion.div>
+                  <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analyzing Your Meeting</h2>
+                  <p className="mt-1 text-sm text-text-muted">5 AI agents processing your transcript</p>
+                </div>
+
+                <div className="glass-card p-4 sm:p-6">
+                  <div className="mb-6">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-text-primary">Progress</span>
+                      <span className="text-sm text-text-muted">{Object.values(agentStatuses).filter((s) => s === "done").length}/5</span>
+                    </div>
+                    <div className="relative h-2 overflow-hidden rounded-full bg-surface2">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(Object.values(agentStatuses).filter((s) => s === "done").length / 5) * 100}%` }}
+                        transition={{ duration: 0.5 }}
+                        className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="relative flex flex-col gap-4">
+                    {/* Connecting line SVG */}
+                    <svg className="pointer-events-none absolute left-[19px] top-0 h-full w-6" aria-hidden="true">
+                      {agentSteps.slice(0, -1).map((step, i) => (
+                        <line
+                          key={step.id}
+                          x1="12" y1={40 + i * 76 + 38}
+                          x2="12" y2={40 + (i + 1) * 76}
+                          stroke={agentStatuses[step.id] === "done" ? step.color : "#161822"}
+                          strokeWidth="2" strokeDasharray={agentStatuses[step.id] === "done" ? "none" : "4 3"}
+                          className="transition-all duration-700"
+                        />
+                      ))}
+                    </svg>
+
+                    {agentSteps.map((step, i) => {
+                      const status = agentStatuses[step.id] || "idle";
+                      const isRunning = status === "running";
+                      const isDone = status === "done";
+                      const isError = status === "error";
+                      return (
+                        <motion.div
+                          key={step.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.1 }}
+                          className={cn(
+                            "relative flex items-start gap-4 rounded-xl border p-4 transition-all duration-500",
+                            isRunning ? "border-primary/30 bg-primary/5" : isDone ? "border-success/20 bg-success/5" : isError ? "border-error/20 bg-error/5" : "border-border bg-surface2/50",
+                          )}
+                          style={isRunning ? { boxShadow: `0 0 20px ${step.color}15` } : undefined}
+                        >
+                          <div className={cn(
+                            "relative z-10 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-300",
+                            isDone ? "bg-success/20" : isRunning ? "bg-primary/20" : isError ? "bg-error/20" : "bg-surface2",
+                            isRunning && "animate-pulse-ring",
+                          )}
+                            style={isRunning ? { "--ring-color": `${step.color}40` } as React.CSSProperties : undefined}
+                          >
+                            {isDone ? <CheckCircle className="h-4 w-4 text-success" /> : isError ? <AlertTriangle className="h-4 w-4 text-error" /> : isRunning ? <LoadingSpinner size="sm" /> : <step.icon className="h-4 w-4 text-text-dim" />}
+                          </div>
+                          <div className="flex-1 min-w-0 pt-1">
+                            <p className={cn("text-sm font-medium", isDone ? "text-success" : isRunning ? "text-text-primary" : isError ? "text-error" : "text-text-muted")}>{step.label}</p>
+                          </div>
+                          <StatusBadge status={status} />
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ---- ERROR ---- */}
+            {error && !loading && (
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mx-auto max-w-lg text-center">
+                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/15">
+                  <AlertTriangle className="h-8 w-8 text-error" />
+                </div>
+                <h2 className="mb-2 text-2xl font-bold text-text-primary">Analysis Failed</h2>
+                <p className="mb-6 text-sm text-text-muted">{error}</p>
+                <div className="flex items-center justify-center gap-3">
+                  <button onClick={() => setError(null)} className="flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
+                    <ArrowRight className="h-4 w-4" /> Try Again
+                  </button>
+                  <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Back Home</Link>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ---- RESULTS ---- */}
+            {result && !loading && (
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} key="results">
+                <div className="mb-6 text-center">
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
+                    <CheckCircle className="h-6 w-6 text-success" />
+                  </motion.div>
+                  <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analysis Complete</h2>
+                  <p className="text-sm text-text-muted">All 5 agents finished processing</p>
+                </div>
+
+                {/* Tabs */}
+                <div className="mb-6 flex gap-1 rounded-xl border border-border bg-surface p-1">
+                  {tabConfig.map((t) => {
+                    const Icon = t.icon;
+                    const isActive = tab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setTab(t.id)}
+                        className={cn(
+                          "flex cursor-pointer flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200",
+                          isActive ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary",
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span className="hidden sm:inline">{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Summary Tab */}
+                {tab === "summary" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary">
+                        <Sparkles className="h-5 w-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-text-primary">Summary</h3>
+                        <p className="text-xs text-text-muted">Sentiment: {result.sentiment}</p>
+                      </div>
+                    </div>
+                    <p className="text-sm leading-relaxed text-text-muted whitespace-pre-line">{result.summary}</p>
+                    {result.decisions.length > 0 && (
+                      <div className="mt-6">
+                        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+                          <Target className="h-4 w-4 text-primary" /> Key Decisions
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {result.decisions.map((d, i) => (
+                            <span key={i} className="rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted">{d}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* Action Items Tab */}
+                {tab === "action-items" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-success to-emerald-400">
+                          <CheckSquare className="h-5 w-5 text-white" />
+                        </div>
+                        <h3 className="text-lg font-bold text-text-primary">Action Items ({result.actionItems.length})</h3>
+                      </div>
+                      {result.actionItems.length > 0 && (
+                        <button
+                          onClick={() => copyText(result.actionItems.map((a) => `☐ ${a.task} — ${a.owner} [${a.priority}]`).join("\n"), "copy-actions")}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
+                        >
+                          {copiedId === "copy-actions" ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                          Copy All
+                        </button>
+                      )}
+                    </div>
+                    {result.actionItems.length === 0 ? (
+                      <p className="text-sm text-text-dim">No action items identified.</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {result.actionItems.map((item) => (
+                          <div key={item.id} className="flex items-start gap-4 rounded-xl border border-border bg-surface2 p-4 hover:border-primary/20 transition-all">
+                            <div className={cn(
+                              "flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full",
+                              item.priority === "high" ? "bg-error/10" : item.priority === "medium" ? "bg-warning/10" : "bg-success/10",
+                            )}>
+                              <CheckSquare className={cn("h-3.5 w-3.5", item.priority === "high" ? "text-error" : item.priority === "medium" ? "text-warning" : "text-success")} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-text-primary">{item.task}</p>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                                <span className="flex items-center gap-1"><User className="h-3 w-3" />{item.owner}</span>
+                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{item.deadline}</span>
+                                <span className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                                  item.priority === "high" ? "bg-error/10 text-error" : item.priority === "medium" ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
+                                )}>{item.priority}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* Email Tab */}
+                {tab === "email" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-cyan-400">
+                          <Mail className="h-5 w-5 text-white" />
+                        </div>
+                        <h3 className="text-lg font-bold text-text-primary">Follow-up Email</h3>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => copyText(result.followUpEmail, "copy-email")}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
+                        >
+                          {copiedId === "copy-email" ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                          Copy
+                        </button>
+                        <a
+                          href={`mailto:?subject=${encodeURIComponent("Meeting Summary")}&body=${encodeURIComponent(result.followUpEmail)}`}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-dark transition-colors"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> Open in Gmail
+                        </a>
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-background p-4">
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed text-text-muted font-sans">{result.followUpEmail}</pre>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Tasks Tab */}
+                {tab === "tasks" && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-warning to-amber-400">
+                        <ListTodo className="h-5 w-5 text-white" />
+                      </div>
+                      <h3 className="text-lg font-bold text-text-primary">Tasks ({result.tasks.length})</h3>
+                    </div>
+                    {result.tasks.length === 0 ? (
+                      <p className="text-sm text-text-dim">No tasks generated.</p>
+                    ) : (
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        {["todo", "in-progress", "done"].map((status) => {
+                          const tasks = result.tasks.filter((t) => t.status === status);
+                          const statusColor = status === "todo" ? "border-primary/20" : status === "in-progress" ? "border-warning/20" : "border-success/20";
+                          const statusLabel = status === "todo" ? "To Do" : status === "in-progress" ? "In Progress" : "Done";
+                          return (
+                            <div key={status} className={cn("rounded-xl border p-4", statusColor)}>
+                              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-2">
+                                <span className={cn("h-2 w-2 rounded-full", status === "todo" ? "bg-primary" : status === "in-progress" ? "bg-warning" : "bg-success")} />
+                                {statusLabel} ({tasks.length})
+                              </h4>
+                              <div className="flex flex-col gap-2">
+                                {tasks.length === 0 && <p className="text-xs text-text-dim">No tasks</p>}
+                                {tasks.map((task) => (
+                                  <div key={task.id} className="rounded-lg border border-border bg-surface2 p-3">
+                                    <p className="text-xs font-medium text-text-primary">{task.title}</p>
+                                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-text-muted">
+                                      <span className="flex items-center gap-1"><User className="h-2.5 w-2.5" />{task.assignee}</span>
+                                      <span className="flex items-center gap-1"><Calendar className="h-2.5 w-2.5" />{task.dueDate}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </motion.div>
+            )}
+          </main>
+
+          {!loading && (
+            <footer className="border-t border-border bg-surface">
+              <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-text-dim">
+                &copy; {new Date().getFullYear()} MeetMind. AI-powered meeting intelligence.
+              </div>
+            </footer>
+          )}
+        </div>
+      </>
     );
   } catch (e) {
     setCrash(e instanceof Error ? e.message : "Page crashed");
     return null;
   }
-}
-
-function AnalyzeInner({
-  transcript, setTranscript, loading, error, result, agentStatuses, currentAgent, handleAnalyze, setCrash, onRetry, onNew,
-}: {
-  transcript: string; setTranscript: (v: string) => void; loading: boolean; error: string | null; result: MeetingAnalysis | null; agentStatuses: Record<string, Agent["status"]>; currentAgent: string | null; handleAnalyze: () => void; setCrash: (v: string) => void; onRetry: () => void; onNew: () => void;
-}) {
-  const runningCount = Object.values(agentStatuses).filter((s) => s === "running" || s === "done").length;
-  const doneCount = Object.values(agentStatuses).filter((s) => s === "done").length;
-
-  return (
-    <div className="min-h-full bg-background">
-      <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-secondary">
-              <Brain className="h-4 w-4 text-white" />
-            </div>
-            <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-lg font-bold text-transparent">MeetMind</span>
-          </Link>
-          <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Home</Link>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
-        {/* ---- INPUT PHASE ---- */}
-        {!loading && !result && !error && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-3xl">
-            <div className="mb-8 text-center">
-              <motion.h1
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="relative text-3xl font-bold leading-tight sm:text-4xl lg:text-5xl"
-              >
-                <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent bg-[length:200%_auto] animate-pulse" style={{ animationDuration: "3s" }}>
-                  Analyze Your Meeting
-                </span>
-              </motion.h1>
-              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="mt-3 text-text-muted sm:text-lg">
-                5 AI agents extract summaries, action items, decisions & more.
-              </motion.p>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
-              <textarea
-                value={transcript}
-                onChange={(e) => { setTranscript(e.target.value); setCrash(""); }}
-                placeholder="Paste your meeting transcript here..."
-                rows={12}
-                className="w-full resize-none rounded-xl border border-border bg-background p-4 text-sm text-text-primary placeholder:text-text-dim outline-none transition-colors focus:border-primary/50 focus:ring-1 focus:ring-primary/30"
-              />
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setTranscript(SAMPLE_TRANSCRIPT)}
-                    className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface2 px-4 py-2 text-sm text-text-muted hover:text-text-primary transition-colors"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Load Sample
-                  </button>
-                  <span className="text-xs text-text-dim">{transcript.length.toLocaleString()} chars</span>
-                </div>
-                <button
-                  onClick={handleAnalyze}
-                  disabled={transcript.trim().split(/\s+/).length < 50 || loading}
-                  className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
-                >
-                  <Zap className="h-4 w-4" />
-                  Analyze Meeting
-                </button>
-              </div>
-              {transcript.trim().split(/\s+/).length < 50 && transcript.trim().length > 0 && (
-                <p className="mt-2 text-xs text-warning">Minimum 50 words required ({transcript.trim().split(/\s+/).length} words)</p>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {/* ---- LOADING PHASE ---- */}
-        {loading && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-2xl">
-            <div className="mb-8 text-center">
-              <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 2, repeat: Infinity }} className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
-                <Bot className="h-7 w-7 text-primary" />
-              </motion.div>
-              <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analyzing Your Meeting</h2>
-              <p className="mt-1 text-sm text-text-muted">5 AI agents processing your transcript — {doneCount}/5 done</p>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-surface p-4 sm:p-6">
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-text-primary">Progress</span>
-                  <span className="text-sm text-text-muted">{Math.round((doneCount / 5) * 100)}%</span>
-                </div>
-                <div className="relative h-2 overflow-hidden rounded-full bg-surface2">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(doneCount / 5) * 100}%` }}
-                    transition={{ duration: 0.5 }}
-                    className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                {agentSteps.map((step, i) => {
-                  const status = agentStatuses[step.id] || "idle";
-                  const isRunning = status === "running";
-                  const isDone = status === "done";
-                  const isError = status === "error";
-                  return (
-                    <motion.div
-                      key={step.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.1 }}
-                      className={cn(
-                        "flex items-center gap-4 rounded-xl border p-4 transition-all duration-300",
-                        isRunning ? "border-primary/30 bg-primary/5" : isDone ? "border-success/20 bg-success/5" : isError ? "border-error/20 bg-error/5" : "border-border bg-surface2/50",
-                      )}
-                      style={isRunning ? { boxShadow: `0 0 20px ${step.color}15` } : undefined}
-                    >
-                      <div className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-lg transition-all duration-300",
-                        isDone ? "bg-success/20" : isRunning ? "bg-primary/20" : isError ? "bg-error/20" : "bg-surface2",
-                      )}>
-                        {isDone ? <CheckCircle className="h-4 w-4 text-success" /> : isError ? <AlertTriangle className="h-4 w-4 text-error" /> : isRunning ? <LoadingSpinner size="sm" /> : <step.icon className="h-4 w-4 text-text-dim" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className={cn(
-                          "text-sm font-medium",
-                          isDone ? "text-success" : isRunning ? "text-text-primary" : isError ? "text-error" : "text-text-muted",
-                        )}>{step.label}</p>
-                      </div>
-                      <StatusBadge status={status} />
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-text-dim">
-              <div className="flex items-center gap-1">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                Processing
-              </div>
-              <span>&middot;</span>
-              <div className="flex items-center gap-1">
-                <CheckCircle className="h-3 w-3 text-success" />
-                {doneCount} done
-              </div>
-              <span>&middot;</span>
-              <div className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {5 - doneCount} pending
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* ---- ERROR PHASE ---- */}
-        {error && !loading && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mx-auto max-w-lg text-center">
-            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-error/15">
-              <AlertTriangle className="h-8 w-8 text-error" />
-            </div>
-            <h2 className="mb-2 text-2xl font-bold text-text-primary">Analysis Failed</h2>
-            <p className="mb-6 text-sm text-text-muted">{error}</p>
-            <div className="flex items-center justify-center gap-3">
-              <button onClick={onRetry} className="flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-                <ArrowRight className="h-4 w-4" /> Try Again
-              </button>
-              <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Back Home</Link>
-            </div>
-          </motion.div>
-        )}
-
-        {/* ---- RESULTS PHASE ---- */}
-        {result && !loading && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="mb-6 text-center">
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
-                <CheckCircle className="h-6 w-6 text-success" />
-              </motion.div>
-              <h2 className="text-xl font-bold text-text-primary sm:text-2xl">Analysis Complete</h2>
-              <p className="text-sm text-text-muted">All 5 agents finished processing</p>
-              <div className="mt-4 flex items-center justify-center gap-3">
-                <button onClick={onNew} className="flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-dark transition-colors">
-                  <ArrowRight className="h-4 w-4" /> New Analysis
-                </button>
-                <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">Home</Link>
-              </div>
-            </div>
-
-            {/* Summary Card */}
-            <div className="mb-6 rounded-2xl border border-border bg-surface p-6">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary">
-                  <Sparkles className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-text-primary">Summary</h3>
-                  <p className="text-xs text-text-muted">Sentiment: {result.sentiment}</p>
-                </div>
-              </div>
-              <p className="text-sm leading-relaxed text-text-muted whitespace-pre-line">{result.summary}</p>
-              {result.decisions.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
-                    <Target className="h-4 w-4 text-primary" />
-                    Key Decisions
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {result.decisions.map((d, i) => (
-                      <span key={i} className="rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted">{d}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Action Items Card */}
-            <div className="mb-6 rounded-2xl border border-border bg-surface p-6">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-success to-emerald-400">
-                  <CheckSquare className="h-5 w-5 text-white" />
-                </div>
-                <h3 className="text-lg font-bold text-text-primary">Action Items ({result.actionItems.length})</h3>
-              </div>
-              {result.actionItems.length === 0 ? (
-                <p className="text-sm text-text-dim">No action items identified.</p>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {result.actionItems.map((item) => (
-                    <div key={item.id} className="flex items-start gap-4 rounded-xl border border-border bg-surface2 p-4">
-                      <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
-                        <CheckSquare className={cn("h-3.5 w-3.5", item.priority === "high" ? "text-error" : item.priority === "medium" ? "text-warning" : "text-success")} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-text-primary">{item.task}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
-                          <span className="flex items-center gap-1"><User className="h-3 w-3" />{item.owner}</span>
-                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{item.deadline}</span>
-                          <span className={cn(
-                            "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                            item.priority === "high" ? "bg-error/10 text-error" : item.priority === "medium" ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
-                          )}>{item.priority}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Follow-up Email Card */}
-            {result.followUpEmail && (
-              <div className="mb-6 rounded-2xl border border-border bg-surface p-6">
-                <div className="mb-4 flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-cyan-400">
-                    <Mail className="h-5 w-5 text-white" />
-                  </div>
-                  <h3 className="text-lg font-bold text-text-primary">Follow-up Email</h3>
-                </div>
-                <div className="rounded-xl bg-background p-4">
-                  <pre className="whitespace-pre-wrap text-sm leading-relaxed text-text-muted font-sans">{result.followUpEmail}</pre>
-                </div>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </main>
-
-      {!loading && (
-        <footer className="border-t border-border bg-surface">
-          <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-text-dim">
-            &copy; {new Date().getFullYear()} MeetMind. AI-powered meeting intelligence.
-          </div>
-        </footer>
-      )}
-    </div>
-  );
 }
