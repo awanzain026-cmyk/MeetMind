@@ -304,11 +304,14 @@ export default function AnalyzePage() {
 
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  // When pipeline visually finishes AND API has responded, show results
+  // When all agents reach a terminal state (done/error) AND API has responded → show results or error
   useEffect(() => {
     if (!loading) return;
-    const allDone = AGENT_IDS.every((id) => agentStatuses[id] === "done");
-    if (!allDone) return;
+    const allTerminal = AGENT_IDS.every((id) => {
+      const s = agentStatuses[id];
+      return s === "done" || s === "error";
+    });
+    if (!allTerminal) return;
     if (!apiData && !apiError) return;
 
     const timer = setTimeout(() => {
@@ -403,11 +406,16 @@ export default function AnalyzePage() {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
       setApiError(msg);
+      // Mark running→error, idle→done so the pipeline reaches a terminal state
       setAgentStatuses((prev) => {
         const n = { ...prev };
-        for (const k of AGENT_IDS) { if (n[k] === "running") n[k] = "error"; }
+        for (const k of AGENT_IDS) {
+          if (n[k] === "running") n[k] = "error";
+          else if (n[k] === "idle") n[k] = "done";
+        }
         return n;
       });
+      setPipelineIdx(AGENT_IDS.length - 1);
     }
   }, [transcript, meetingTitle, depth, loading, toast]);
 
