@@ -716,8 +716,11 @@ function HowItWorksSection() {
     <FadeInSection>
       <section
         id="how-it-works"
-        className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8"
+        className="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8"
       >
+        <div className="pointer-events-none absolute inset-0 opacity-40" style={{
+          background: "radial-gradient(ellipse 80% 50% at 50% 0%, rgba(6,182,212,0.06) 0%, transparent 70%)"
+        }} />
         <div className="mb-14 text-center">
           <h2 className="text-3xl font-bold text-text-primary sm:text-4xl">
             From Transcript to Insights in 3 Steps

@@ -542,119 +542,109 @@ function TasksTab({
   completedTasks: Set<string>;
   setCompletedTasks: (v: Set<string>) => void;
 }) {
+  const [taskStatuses, setTaskStatuses] = useState<Record<string, string>>({});
+
   const columns = [
-    { key: "todo", label: "To Do", icon: Clock, color: "text-text-muted" },
-    {
-      key: "in-progress",
-      label: "In Progress",
-      icon: AlertCircle,
-      color: "text-primary",
-    },
-    { key: "done", label: "Done", icon: Check, color: "text-success" },
+    { key: "todo", label: "To Do", icon: Clock, color: "text-text-muted", bg: "from-surface to-surface2", dot: "#64748b", headerBg: "rgba(100,116,139,0.1)" },
+    { key: "in-progress", label: "In Progress", icon: AlertCircle, color: "text-warning", bg: "from-surface to-warning/5", dot: "#f59e0b", headerBg: "rgba(245,158,11,0.1)" },
+    { key: "done", label: "Done", icon: Check, color: "text-success", bg: "from-surface to-success/5", dot: "#10b981", headerBg: "rgba(16,185,129,0.1)" },
   ] as const;
 
+  const getTaskStatus = (task: Task) => taskStatuses[task.id] || task.status || "todo";
+
+  const getTasksForColumn = (colKey: string, tasks: Task[]) =>
+    tasks.filter((t) => getTaskStatus(t) === colKey);
+
+  const allTasks = Object.values(tasksByStatus).flat();
+
+  const moveTask = (taskId: string, newStatus: string) => {
+    setTaskStatuses((prev) => ({ ...prev, [taskId]: newStatus }));
+  };
+
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-      {columns.map((col) => {
-        const Icon = col.icon;
-        const tasks = tasksByStatus[col.key] ?? [];
-        return (
-          <div
-            key={col.key}
-            className="rounded-xl border border-border bg-surface/50"
-          >
-            <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-              <div className="flex items-center gap-2">
-                <Icon className={cn("h-3.5 w-3.5", col.color)} />
-                <span className="text-xs font-medium text-text-primary">
-                  {col.label}
-                </span>
-              </div>
-              <span className="text-xs text-text-muted">{tasks.length}</span>
-            </div>
-
-            <div className="space-y-2 p-3">
-              {tasks.map((task) => {
-                const isCompleted = completedTasks.has(task.id);
-                const initials = task.assignee
-                  .split(" ")
-                  .map((n) => n[0])
-                  .join("")
-                  .toUpperCase()
-                  .slice(0, 2);
-
-                return (
-                  <motion.div
-                    key={task.id}
-                    layout
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    whileHover={{ y: -2 }}
-                    className={cn(
-                      "rounded-lg border border-border bg-surface p-3 transition-all duration-200 cursor-default",
-                      isCompleted && "opacity-60",
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      <button
-                        onClick={() => {
-                          const next = new Set(completedTasks);
-                          if (isCompleted) next.delete(task.id);
-                          else next.add(task.id);
-                          setCompletedTasks(next);
-                        }}
-                        className={cn(
-                          "mt-0.5 flex h-4 w-4 items-center justify-center rounded border transition-colors cursor-pointer",
-                          isCompleted
-                            ? "border-success bg-success text-white"
-                            : "border-text-dim/30 hover:border-primary/50",
-                        )}
-                      >
-                        {isCompleted && <Check className="h-3 w-3" />}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className={cn(
-                            "text-sm",
-                            isCompleted
-                              ? "text-text-muted line-through"
-                              : "text-text-primary",
-                          )}
-                        >
-                          {task.title}
-                        </p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-[9px] font-semibold text-primary">
-                            {initials}
-                          </div>
-                          <span className="text-[10px] text-text-muted">
-                            {task.assignee}
-                          </span>
-                          {task.dueDate && (
-                            <span className="flex items-center gap-1 text-[10px] text-text-dim">
-                              <Calendar className="h-2.5 w-2.5" />
-                              {new Date(task.dueDate).toLocaleDateString(
-                                "en-US",
-                                { month: "short", day: "numeric" },
-                              )}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-
-              {tasks.length === 0 && (
-                <div className="py-6 text-center">
-                  <p className="text-xs text-text-dim">No tasks</p>
+    <div>
+      <p className="mb-4 text-xs text-text-muted">Click task buttons to move between columns</p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {columns.map((col) => {
+          const Icon = col.icon;
+          const tasks = getTasksForColumn(col.key, allTasks);
+          return (
+            <div
+              key={col.key}
+              className={cn("rounded-xl border border-border bg-gradient-to-b", col.bg)}
+            >
+              <div
+                className="flex items-center justify-between border-b border-border px-3 py-2.5 rounded-t-xl"
+                style={{ background: col.headerBg }}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full" style={{ backgroundColor: col.dot }} />
+                  <span className="text-xs font-semibold text-text-primary">{col.label}</span>
                 </div>
-              )}
+                <span className="rounded-full bg-surface2 px-2 py-0.5 text-xs text-text-muted">{tasks.length}</span>
+              </div>
+
+              <div className="space-y-2 p-3 min-h-[120px]">
+                {tasks.map((task) => {
+                  const isCompleted = completedTasks.has(task.id);
+                  const initials = task.assignee.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
+                  const status = getTaskStatus(task);
+
+                  return (
+                    <motion.div
+                      key={task.id}
+                      layout
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={cn(
+                        "rounded-lg border border-border bg-surface p-3 transition-all duration-200",
+                        isCompleted && "opacity-60",
+                      )}
+                    >
+                      <p className={cn("text-sm mb-2", isCompleted ? "text-text-muted line-through" : "text-text-primary")}>
+                        {task.title}
+                      </p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-[9px] font-semibold text-primary">{initials}</div>
+                        <span className="text-[10px] text-text-muted">{task.assignee}</span>
+                        {task.dueDate && (
+                          <span className="flex items-center gap-1 text-[10px] text-text-dim">
+                            <Calendar className="h-2.5 w-2.5" />
+                            {new Date(task.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                          </span>
+                        )}
+                      </div>
+                      {/* Move buttons */}
+                      <div className="flex gap-1 flex-wrap">
+                        {status !== "todo" && (
+                          <button onClick={() => moveTask(task.id, "todo")} className="rounded px-2 py-0.5 text-[10px] bg-surface2 text-text-muted hover:bg-border cursor-pointer transition-colors">
+                            → To Do
+                          </button>
+                        )}
+                        {status !== "in-progress" && (
+                          <button onClick={() => moveTask(task.id, "in-progress")} className="rounded px-2 py-0.5 text-[10px] bg-warning/15 text-warning hover:bg-warning/25 cursor-pointer transition-colors">
+                            → In Progress
+                          </button>
+                        )}
+                        {status !== "done" && (
+                          <button onClick={() => moveTask(task.id, "done")} className="rounded px-2 py-0.5 text-[10px] bg-success/15 text-success hover:bg-success/25 cursor-pointer transition-colors">
+                            → Done ✓
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+                {tasks.length === 0 && (
+                  <div className="py-8 text-center">
+                    <p className="text-xs text-text-dim">Drop tasks here</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
