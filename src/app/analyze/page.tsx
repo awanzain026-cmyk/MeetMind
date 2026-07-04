@@ -291,47 +291,33 @@ export default function AnalyzePage() {
   const apiDataRef = useRef<MeetingAnalysis | null>(null);
   const apiErrorRef = useRef<string | null>(null);
   const pipeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pipelineDoneRef = useRef(false);
 
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  const finishPipeline = useCallback(() => {
-    if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
-    pipelineDoneRef.current = true;
-    const done: Record<string, Agent["status"]> = {};
-    for (const id of AGENT_IDS) done[id] = "done";
-    setAgentStatuses(done);
-    setPipelineIdx(AGENT_IDS.length - 1);
+  // When pipeline visually finishes AND API has responded, show results
+  useEffect(() => {
+    if (!loading) return;
+    const allDone = AGENT_IDS.every((id) => agentStatuses[id] === "done");
+    if (!allDone) return;
 
-    setTimeout(() => {
+    const data = apiDataRef.current;
+    const err = apiErrorRef.current;
+    if (!data && !err) return; // API hasn't responded yet
+
+    const timer = setTimeout(() => {
       if (!mountedRef.current) return;
-      if (apiDataRef.current) {
-        setResult(apiDataRef.current);
-        setLoading(false);
+      if (data) {
+        setResult(data);
         toast.add("Analysis complete! All 5 agents finished.");
-      } else if (apiErrorRef.current) {
-        setError(apiErrorRef.current);
-        setLoading(false);
-        toast.add("Analysis failed. Check the error.", false);
+      } else {
+        setError(err);
+        toast.add(err || "Analysis failed", false);
       }
-    }, 500);
-  }, [toast]);
+      setLoading(false);
+    }, 400);
 
-  const advancePipeline = useCallback(() => {
-    setPipelineIdx((prev) => {
-      const next = prev + 1;
-      if (next >= AGENT_IDS.length) {
-        finishPipeline();
-        return prev;
-      }
-      setAgentStatuses((s) => ({
-        ...s,
-        [AGENT_IDS[prev]]: "done",
-        [AGENT_IDS[next]]: "running",
-      }));
-      return next;
-    });
-  }, [finishPipeline]);
+    return () => clearTimeout(timer);
+  }, [loading, agentStatuses, toast]);
 
   const copyText = useCallback(async (text: string, id: string) => {
     try {
@@ -347,7 +333,6 @@ export default function AnalyzePage() {
     abortRef.current = false;
     apiDataRef.current = null;
     apiErrorRef.current = null;
-    pipelineDoneRef.current = false;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -369,24 +354,9 @@ export default function AnalyzePage() {
         const next = prev + 1;
         if (next >= AGENT_IDS.length) {
           if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
-          pipelineDoneRef.current = true;
           const done: Record<string, Agent["status"]> = {};
           for (const id of AGENT_IDS) done[id] = "done";
           setAgentStatuses(done);
-
-          setTimeout(() => {
-            if (!mountedRef.current) return;
-            if (apiDataRef.current) {
-              setResult(apiDataRef.current);
-              setLoading(false);
-              toast.add("Analysis complete! All 5 agents finished.");
-            } else if (apiErrorRef.current) {
-              setError(apiErrorRef.current);
-              setLoading(false);
-              toast.add("Analysis failed. Check the error.", false);
-            }
-          }, 500);
-
           return prev;
         }
         setAgentStatuses((s) => ({
@@ -418,43 +388,19 @@ export default function AnalyzePage() {
 
       const data = json.data as MeetingAnalysis;
       if (!mountedRef.current) return;
-
       apiDataRef.current = data;
-
-      if (pipelineDoneRef.current || pipelineIdx >= AGENT_IDS.length - 1) {
-        if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
-        pipelineDoneRef.current = true;
-        const done: Record<string, Agent["status"]> = {};
-        for (const id of AGENT_IDS) done[id] = "done";
-        setAgentStatuses(done);
-        setPipelineIdx(AGENT_IDS.length - 1);
-        await new Promise((r) => setTimeout(r, 400));
-        if (mountedRef.current) {
-          setResult(data);
-          setLoading(false);
-          toast.add("Analysis complete! All 5 agents finished.");
-        }
-      }
     } catch (err) {
       if (pipeIntervalRef.current) { clearInterval(pipeIntervalRef.current); pipeIntervalRef.current = null; }
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[AnalyzePage]", msg);
       apiErrorRef.current = msg;
-
-      if (pipelineDoneRef.current || pipelineIdx >= AGENT_IDS.length - 1) {
-        if (mountedRef.current) {
-          setError(msg);
-          setLoading(false);
-          toast.add(msg, false);
-          setAgentStatuses((prev) => {
-            const n = { ...prev };
-            for (const k of AGENT_IDS) { if (n[k] === "running") n[k] = "error"; }
-            return n;
-          });
-        }
-      }
+      setAgentStatuses((prev) => {
+        const n = { ...prev };
+        for (const k of AGENT_IDS) { if (n[k] === "running") n[k] = "error"; }
+        return n;
+      });
     }
-  }, [transcript, meetingTitle, depth, loading, pipelineIdx, toast]);
+  }, [transcript, meetingTitle, depth, loading, toast]);
 
   if (crash) {
     return (
