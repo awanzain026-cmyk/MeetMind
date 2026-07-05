@@ -54,6 +54,111 @@ Any questions? No? Great work everyone.`;
 type Depth = "quick" | "standard" | "deep";
 type TabId = "summary" | "action-items" | "email" | "tasks";
 
+// ─── History Types ───────────────────────────────────────────────────────────
+interface HistoryEntry {
+  id: string;
+  date: string;
+  title: string;
+  transcript: string;
+  result: MeetingAnalysis;
+}
+
+// ─── TasksKanban Component ───────────────────────────────────────────────────
+interface Task { id: string; title: string; assignee: string; dueDate: string; status: string; }
+
+function TasksKanban({ tasks }: { tasks: Task[] }) {
+  const [statuses, setStatuses] = useState<Record<string, string>>(() =>
+    Object.fromEntries(tasks.map((t) => [t.id, "todo"]))
+  );
+
+  const move = (id: string, s: string) => setStatuses((p) => ({ ...p, [id]: s }));
+
+  const cols = [
+    { key: "todo", label: "To Do", dot: "#64748b", headerBg: "rgba(100,116,139,0.12)", border: "rgba(100,116,139,0.2)" },
+    { key: "in-progress", label: "In Progress", dot: "#f59e0b", headerBg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.25)" },
+    { key: "done", label: "Done", dot: "#10b981", headerBg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.25)" },
+  ];
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {cols.map((col) => {
+        const colTasks = tasks.filter((t) => (statuses[t.id] || "todo") === col.key);
+        return (
+          <div key={col.key} className="rounded-xl border overflow-hidden" style={{ borderColor: col.border }}>
+            <div className="flex items-center justify-between px-3 py-2.5" style={{ background: col.headerBg }}>
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full" style={{ backgroundColor: col.dot }} />
+                <span className="text-xs font-semibold text-text-primary">{col.label}</span>
+              </div>
+              <span className="rounded-full bg-surface2 px-2 py-0.5 text-xs text-text-muted">{colTasks.length}</span>
+            </div>
+            <div className="min-h-[100px] space-y-2 p-3">
+              {colTasks.length === 0 && (
+                <p className="py-6 text-center text-xs text-text-dim">No tasks here</p>
+              )}
+              {colTasks.map((task) => {
+                const initials = task.assignee.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
+                const isDone = col.key === "done";
+                return (
+                  <motion.div key={task.id} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                    className={cn("rounded-lg border border-border bg-surface p-3", isDone && "opacity-70")}>
+                    {/* Checkbox row */}
+                    <div className="flex items-start gap-2 mb-2">
+                      <button
+                        onClick={() => move(task.id, isDone ? "todo" : "done")}
+                        className={cn(
+                          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all cursor-pointer",
+                          isDone ? "border-success bg-success text-white" : "border-text-dim/30 hover:border-success/60"
+                        )}
+                      >
+                        {isDone && <Check className="h-3 w-3" />}
+                      </button>
+                      <p className={cn("text-xs font-medium leading-snug", isDone ? "line-through text-text-muted" : "text-text-primary")}>
+                        {task.title}
+                      </p>
+                    </div>
+                    {/* Meta */}
+                    <div className="flex items-center gap-2 mb-2 pl-6">
+                      <div className="flex h-4 w-4 items-center justify-center rounded-full bg-primary/20 text-[8px] font-bold text-primary">{initials}</div>
+                      <span className="text-[10px] text-text-muted">{task.assignee}</span>
+                      {task.dueDate && task.dueDate !== "TBD" && task.dueDate !== "None" && (
+                        <span className="text-[10px] text-text-dim flex items-center gap-0.5">
+                          <Calendar className="h-2.5 w-2.5" />{task.dueDate}
+                        </span>
+                      )}
+                    </div>
+                    {/* Move buttons */}
+                    <div className="flex gap-1 flex-wrap pl-6">
+                      {col.key !== "in-progress" && (
+                        <button onClick={() => move(task.id, "in-progress")}
+                          className="rounded px-2 py-0.5 text-[10px] bg-warning/15 text-warning hover:bg-warning/25 cursor-pointer transition-colors">
+                          In Progress →
+                        </button>
+                      )}
+                      {col.key !== "done" && (
+                        <button onClick={() => move(task.id, "done")}
+                          className="rounded px-2 py-0.5 text-[10px] bg-success/15 text-success hover:bg-success/25 cursor-pointer transition-colors">
+                          Done ✓
+                        </button>
+                      )}
+                      {col.key !== "todo" && (
+                        <button onClick={() => move(task.id, "todo")}
+                          className="rounded px-2 py-0.5 text-[10px] bg-surface2 text-text-muted hover:bg-border cursor-pointer transition-colors">
+                          ← To Do
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const PIPELINE_COLORS = [
   { primary: "#6366f1", bg: "rgba(99,102,241,0.08)", border: "rgba(99,102,241,0.25)", glow: "rgba(99,102,241,0.15)" },
   { primary: "#8b5cf6", bg: "rgba(139,92,246,0.08)", border: "rgba(139,92,246,0.25)", glow: "rgba(139,92,246,0.15)" },
@@ -306,11 +411,37 @@ export default function AnalyzePage() {
   const [apiData, setApiData] = useState<MeetingAnalysis | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [allDoneAt, setAllDoneAt] = useState<number | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const toast = useToast();
   const mountedRef = useRef(true);
   const abortRef = useRef(false);
 
-  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+  // Load history from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("meetmind_history");
+      if (saved) setHistory(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  // Save result to history when ready
+  useEffect(() => {
+    if (!result) return;
+    const entry: HistoryEntry = {
+      id: Date.now().toString(),
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      title: meetingTitle || result.summary?.slice(0, 40) || "Meeting Analysis",
+      transcript,
+      result,
+    };
+    setHistory((prev) => {
+      const next = [entry, ...prev].slice(0, 10);
+      try { localStorage.setItem("meetmind_history", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
 
   // 1-second fallback: if all agents done for >1s and API has responded, auto-transition
   useEffect(() => {
@@ -529,8 +660,14 @@ export default function AnalyzePage() {
                 <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-lg font-bold text-transparent">MeetMind</span>
               </Link>
               <div className="flex items-center gap-3">
+                {history.length > 0 && (
+                  <button onClick={() => setShowHistory(!showHistory)}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted hover:text-primary hover:border-primary/30 transition-all">
+                    <Clock className="h-3 w-3" /> History ({history.length})
+                  </button>
+                )}
                 {(result && !loading) && (
-                  <button onClick={() => { setResult(null); setTranscript(""); setMeetingTitle(""); }}
+                  <button onClick={() => { setResult(null); setTranscript(""); setMeetingTitle(""); setShowHistory(false); }}
                     className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-surface2 px-3 py-1.5 text-xs text-text-muted hover:text-text-primary hover:border-primary/30 transition-all">
                     <ArrowRight className="h-3 w-3" /> New
                   </button>
@@ -539,6 +676,36 @@ export default function AnalyzePage() {
               </div>
             </div>
           </header>
+
+          {/* History Panel */}
+          <AnimatePresence>
+            {showHistory && history.length > 0 && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                className="border-b border-border bg-surface/80 backdrop-blur-lg overflow-hidden">
+                <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-primary" /> Analysis History
+                    </h3>
+                    <button onClick={() => { setHistory([]); localStorage.removeItem("meetmind_history"); setShowHistory(false); }}
+                      className="text-xs text-text-muted hover:text-error cursor-pointer transition-colors">Clear All</button>
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-2">
+                    {history.map((entry) => (
+                      <button key={entry.id} onClick={() => { setResult(entry.result); setTranscript(entry.transcript); setMeetingTitle(entry.title); setShowHistory(false); }}
+                        className="flex-shrink-0 cursor-pointer rounded-xl border border-border bg-surface2 p-3 text-left hover:border-primary/40 transition-all w-52">
+                        <p className="text-xs font-semibold text-text-primary truncate">{entry.title}</p>
+                        <p className="text-[10px] text-text-muted mt-1 flex items-center gap-1">
+                          <Calendar className="h-2.5 w-2.5" />{entry.date}
+                        </p>
+                        <p className="text-[10px] text-text-dim mt-1 truncate">{entry.result.actionItems?.length || 0} action items</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
             {/* ====== INPUT PHASE ====== */}
@@ -853,37 +1020,12 @@ export default function AnalyzePage() {
                         <ListTodo className="h-5 w-5 text-white" />
                       </div>
                       <h3 className="text-lg font-bold text-text-primary">Tasks ({result.tasks.length})</h3>
+                      <span className="text-xs text-text-muted ml-auto">Click buttons to move tasks between columns</span>
                     </div>
                     {result.tasks.length === 0 ? (
                       <p className="text-sm text-text-dim">No tasks generated.</p>
                     ) : (
-                      <div className="grid gap-4 sm:grid-cols-3">
-                        {["todo", "in-progress", "done"].map((status) => {
-                          const tasks = result.tasks.filter((t) => t.status === status);
-                          const color = status === "todo" ? "border-primary/20" : status === "in-progress" ? "border-accent/20" : "border-emerald-500/20";
-                          const label = status === "todo" ? "To Do" : status === "in-progress" ? "In Progress" : "Done";
-                          return (
-                            <div key={status} className={cn("rounded-xl border p-4", color)}>
-                              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-2">
-                                <span className={cn("h-2 w-2 rounded-full", status === "todo" ? "bg-primary" : status === "in-progress" ? "bg-accent" : "bg-success")} />
-                                {label} ({tasks.length})
-                              </h4>
-                              <div className="flex flex-col gap-2">
-                                {tasks.length === 0 && <p className="text-xs text-text-dim">No tasks</p>}
-                                {tasks.map((task) => (
-                                  <div key={task.id} className="rounded-lg border border-border bg-surface2 p-3 hover:border-primary/20 transition-all">
-                                    <p className="text-xs font-medium text-text-primary">{task.title}</p>
-                                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-text-muted">
-                                      <span className="flex items-center gap-1"><User className="h-2.5 w-2.5" />{task.assignee}</span>
-                                      <span className="flex items-center gap-1"><Calendar className="h-2.5 w-2.5" />{task.dueDate}</span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <TasksKanban tasks={result.tasks} />
                     )}
                   </motion.div>
                 )}
