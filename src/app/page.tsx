@@ -1016,12 +1016,7 @@ function FooterSection() {
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5">
-            <Zap className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-medium text-text-muted">
-              Built with AI
-            </span>
-          </div>
+
         </div>
 
         <div className="mt-8 border-t border-border pt-6 text-center">
